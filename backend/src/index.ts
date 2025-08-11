@@ -1,4 +1,7 @@
-import "dotenv/config";
+if (process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  require('dotenv').config();
+}
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -8,7 +11,7 @@ import apiRoutes from './api';
 import { startRSSIngestion } from './cron';
 
 const app = express();
-const port = process.env.PORT || 4000;
+const port = Number(process.env.PORT) || 4000;
 
 // Rate limiting
 const limiter = rateLimit({
@@ -60,8 +63,7 @@ app.use('*', (req, res) => {
 
 // Start server
 app.listen(port, () => {
-  const cronStatus = process.env.CRON_SCHEDULE ? 'on' : 'off';
-  console.log(`Started backend on :${port} | cron=${cronStatus}`);
+  console.log(`listening on ${port}`);
   
   // Start RSS ingestion cron job
   startRSSIngestion();
