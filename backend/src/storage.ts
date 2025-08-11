@@ -1,6 +1,41 @@
 import { NewsItem } from './types';
 import { getDb } from './lib/firestore';
 
+// Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
+const sanitizePayload = (payload: any): any => {
+  if (payload === null || payload === undefined) {
+    return undefined;
+  }
+  
+  if (typeof payload === 'object' && !Array.isArray(payload)) {
+    const sanitized: any = {};
+    let hasValidFields = false;
+    
+    for (const [key, value] of Object.entries(payload)) {
+      // Skip undefined and null values
+      if (value === undefined || value === null) {
+        continue;
+      }
+      
+      // Recursively sanitize nested objects
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        const sanitizedNested = sanitizePayload(value);
+        if (sanitizedNested !== undefined) {
+          sanitized[key] = sanitizedNested;
+          hasValidFields = true;
+        }
+      } else {
+        sanitized[key] = value;
+        hasValidFields = true;
+      }
+    }
+    
+    return hasValidFields ? sanitized : undefined;
+  }
+  
+  return payload;
+};
+
 // Add news items to Firestore (with deduplication)
 export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; skipped: number }> => {
   let added = 0;
@@ -19,13 +54,42 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         continue;
       }
 
+      // Sanitize the payload to remove undefined/null values
+      const sanitizedItem = sanitizePayload(item);
+      
+      // Check if sanitized payload is empty/invalid
+      if (!sanitizedItem || Object.keys(sanitizedItem).length === 0) {
+        console.log('[ingest][skip]', { 
+          reason: 'empty_payload_after_sanitization',
+          id: item.id, 
+          headline: item.headline,
+          originalKeys: Object.keys(item),
+          sanitizedKeys: sanitizedItem ? Object.keys(sanitizedItem) : []
+        });
+        skipped++;
+        continue;
+      }
+
+      // Ensure required fields have safe defaults
+      const safeItem = {
+        ...sanitizedItem,
+        primary_entity: sanitizedItem.primary_entity || undefined,
+        sources: Array.isArray(sanitizedItem.sources) ? sanitizedItem.sources : [],
+        tickers: Array.isArray(sanitizedItem.tickers) ? sanitizedItem.tickers : [],
+        impact: sanitizedItem.impact || 'L',
+        confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50
+      };
+
       // Add new document
-      await docRef.set(item);
+      await docRef.set(safeItem);
       console.log('[ingest][write]', { 
         collection: 'news', 
-        id: item.id, 
-        headline: item.headline, 
-        published_at: item.published_at 
+        id: safeItem.id, 
+        headline: safeItem.headline, 
+        published_at: safeItem.published_at,
+        primary_entity: safeItem.primary_entity,
+        impact: safeItem.impact,
+        confidence: safeItem.confidence
       });
       added++;
     } catch (error) {

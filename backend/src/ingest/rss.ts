@@ -77,18 +77,19 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
   const threadId = generateThreadId(primaryEntity, pubDate);
   const ingestedAt = new Date().toISOString();
 
+  // Ensure all fields have safe values (no undefined)
   return {
     id: generateArticleHash(headline, primaryEntity),
     thread_id: threadId,
-    headline,
-    why: description,
+    headline: headline || 'Untitled',
+    why: description || '',
     sources: [sourceName],
     tickers: primaryEntity ? [primaryEntity] : [],
     published_at: pubDate,
     ingested_at: ingestedAt,
     impact: 'L' as Impact,
     confidence: 50,
-    primary_entity: primaryEntity
+    primary_entity: primaryEntity || undefined
   };
 };
 

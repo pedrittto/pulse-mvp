@@ -22,5 +22,6 @@ export function getDb() {
     });
   }
   db = admin.firestore();
+  db.settings({ ignoreUndefinedProperties: true });
   return db;
 }
