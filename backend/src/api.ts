@@ -1,10 +1,11 @@
 import express from 'express';
 import { NewsItem, Watchlist } from './types';
 import { getNewsItems } from './storage';
-import { db } from './config/firebase';
+import { getDb } from './lib/firestore';
+import { ingestRSSFeeds } from './ingest/rss';
 
 // Helper function to get Firestore database instance
-export const getDb = () => db;
+export const getDbInstance = () => getDb();
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ router.get('/debug/firestore', async (req, res) => {
     };
 
     // Write test document
-    const debugCollection = db.collection('debug');
+    const debugCollection = getDb().collection('debug');
     const docRef = debugCollection.doc('conn');
     await docRef.set(testData, { merge: true });
 
@@ -42,6 +43,148 @@ router.get('/debug/firestore', async (req, res) => {
     console.error('Firestore debug endpoint error:', error);
     console.error('Full stack trace:', error instanceof Error ? error.stack : 'No stack trace available');
     
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+    });
+  }
+});
+
+// Debug endpoint for Firebase credentials verification
+router.get('/debug/creds', async (req, res) => {
+  // Environment guard - only allow in non-production
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Debug endpoint not available in production',
+      code: 'DEBUG_DISABLED'
+    });
+  }
+
+  try {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const usesADC = !process.env.FIREBASE_PRIVATE_KEY; // If no private key, likely using ADC
+
+    // Test if we can list collections (harmless permission probe)
+    let canList = false;
+    let listErrorCode = null;
+    
+    try {
+      await getDb().listCollections();
+      canList = true;
+    } catch (error: any) {
+      canList = false;
+      listErrorCode = error.code || 'UNKNOWN';
+      console.error('Permission probe failed:', error.message);
+    }
+
+    res.json({
+      ok: true,
+      projectId,
+      clientEmail,
+      usesADC,
+      canList,
+      listErrorCode
+    });
+  } catch (error) {
+    console.error('Creds debug endpoint error:', error);
+    console.error('Full stack trace:', error instanceof Error ? error.stack : 'No stack trace available');
+    
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+    });
+  }
+});
+
+// Debug endpoint for listing Firestore collections
+router.get('/debug/firestore-list', async (req, res) => {
+  // Environment guard - only allow in non-production
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Debug endpoint not available in production',
+      code: 'DEBUG_DISABLED'
+    });
+  }
+
+  try {
+    const { col = 'news', limit = 5 } = req.query;
+    const collectionName = col as string;
+    const limitNum = Math.min(parseInt(limit as string) || 5, 100); // Cap at 100
+
+    const collection = getDb().collection(collectionName);
+    
+    // Try to order by ingested_at first, fallback to published_at
+    let snapshot;
+    try {
+      snapshot = await collection
+        .orderBy('ingested_at', 'desc')
+        .limit(limitNum)
+        .get();
+    } catch (error) {
+      // If ingested_at doesn't exist, try published_at
+      snapshot = await collection
+        .orderBy('published_at', 'desc')
+        .limit(limitNum)
+        .get();
+    }
+
+    const items: any[] = [];
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      items.push({
+        id: doc.id,
+        ...data
+      });
+    });
+
+    res.json({
+      ok: true,
+      col: collectionName,
+      count: items.length,
+      items
+    });
+  } catch (error) {
+    console.error('Firestore list debug endpoint error:', error);
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+    });
+  }
+});
+
+// Admin endpoint for manual ingestion
+router.post('/admin/ingest-now', async (req, res) => {
+  // Environment guard - only allow in non-production
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Admin endpoint not available in production',
+      code: 'ADMIN_DISABLED'
+    });
+  }
+
+  try {
+    console.log('[admin] Manual ingestion requested');
+    const startTime = Date.now();
+    
+    const result = await ingestRSSFeeds();
+    
+    const duration = Date.now() - startTime;
+    console.log(`[admin] Manual ingestion completed in ${duration}ms:`, result);
+    
+    res.json({
+      ok: true,
+      ...result,
+      duration
+    });
+  } catch (error) {
+    console.error('[admin] Manual ingestion failed:', error);
     res.status(500).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown error',
@@ -85,7 +228,10 @@ router.get('/feed', async (req, res) => {
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
     const items = await getNewsItems(newsLimit);
-    res.json(items);
+    res.json({
+      items,
+      total: items.length
+    });
   } catch (error) {
     console.error('Error in /feed endpoint:', error);
     res.status(500).json({
@@ -104,7 +250,7 @@ router.get('/watchlist/:userId', async (req, res) => {
       return res.json(demoWatchlist);
     }
     
-    const watchlistsCollection = db.collection('watchlists');
+    const watchlistsCollection = getDb().collection('watchlists');
     const docRef = watchlistsCollection.doc(userId);
     const docSnap = await docRef.get();
     
@@ -168,9 +314,15 @@ router.post('/watchlist', async (req, res) => {
     }
     
     // Store in Firestore
-    const watchlistsCollection = db.collection('watchlists');
+    const watchlistsCollection = getDb().collection('watchlists');
     const docRef = watchlistsCollection.doc(watchlist.user_id);
     await docRef.set(watchlist);
+    console.log('[api][write]', { 
+      collection: 'watchlists', 
+      id: watchlist.user_id, 
+      tickers: watchlist.tickers.length,
+      keywords: watchlist.keywords.length
+    });
     
     res.status(200).json(watchlist);
   } catch (error) {

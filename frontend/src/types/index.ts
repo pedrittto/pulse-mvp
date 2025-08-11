@@ -5,6 +5,7 @@ export interface NewsItem {
   thread_id: string;
   headline: string;
   why: string;
+  description?: string;
   sources: string[];
   tickers: string[];
   published_at: string; // ISO string
@@ -12,6 +13,7 @@ export interface NewsItem {
   impact: Impact;
   confidence: number; // 0-100
   primary_entity?: string;
+  image_url?: string;
 }
 
 export interface FeedResponse {

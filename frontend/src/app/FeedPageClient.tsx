@@ -1,65 +1,55 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import useSWR, { mutate } from 'swr'
 import Topbar from '@/components/Topbar'
 import FeedItem from '@/components/FeedItem'
 import { NewsItem, FeedResponse, FilterType, Watchlist } from '@/types'
 
 interface FeedPageClientProps {
-  initialFeed: FeedResponse | null
-  initialWatchlist?: Watchlist | null
   apiBaseUrl: string
 }
 
-export default function FeedPageClient({ 
-  initialFeed, 
-  initialWatchlist, 
-  apiBaseUrl 
-}: FeedPageClientProps) {
+// SWR fetcher function
+const fetcher = (url: string) => fetch(url).then(r => r.json())
+
+export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  
-  // Client state
-  const [feedData, setFeedData] = useState<FeedResponse | null>(initialFeed)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   
   // URL state
   const currentFilter = (searchParams.get('f') as FilterType) || 'all'
   const currentSearch = searchParams.get('q') || ''
 
-  // Fetch feed data
-  const fetchFeedData = useCallback(async (filter?: FilterType, search?: string) => {
-    setLoading(true)
-    setError(null)
+  // Build API URL with query parameters
+  const buildApiUrl = useCallback(() => {
+    const params = new URLSearchParams({ limit: '20' })
     
-    try {
-      const params = new URLSearchParams({ limit: '20' })
-      
-      if (filter && filter !== 'all') {
-        params.set('filter', filter)
-      }
-      
-      if (search) {
-        params.set('q', search)
-      }
-      
-      const response = await fetch(`${apiBaseUrl}/feed?${params.toString()}`)
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      
-      const data = await response.json()
-      setFeedData(data)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch feed data')
-      console.error('Failed to fetch feed data:', err)
-    } finally {
-      setLoading(false)
+    if (currentFilter && currentFilter !== 'all') {
+      params.set('filter', currentFilter)
     }
-  }, [apiBaseUrl])
+    
+    if (currentSearch) {
+      params.set('q', currentSearch)
+    }
+    
+    return `${apiBaseUrl}/feed?${params.toString()}`
+  }, [apiBaseUrl, currentFilter, currentSearch])
+
+  // SWR hook for data fetching
+  const { data: feedData, error, isLoading } = useSWR<FeedResponse>(
+    buildApiUrl(),
+    fetcher,
+    {
+      onSuccess: (data) => {
+        console.info('FEED_LOADED', data.items?.length || 0, data.items?.[0])
+      },
+      onError: (err) => {
+        console.error('Failed to fetch feed data:', err)
+      }
+    }
+  )
 
   // Handle filter change
   const handleFilterChange = useCallback((filter: FilterType, search?: string) => {
@@ -78,26 +68,23 @@ export default function FeedPageClient({
     
     const newUrl = params.toString() ? `?${params.toString()}` : '/'
     router.push(newUrl)
-    
-    // Fetch new data
-    fetchFeedData(filter, search)
-  }, [router, searchParams, fetchFeedData])
+  }, [router, searchParams])
 
   // Handle watchlist update
   const handleWatchlistUpdate = useCallback(() => {
     // Refresh the feed if we're on the "My" filter
     if (currentFilter === 'my') {
-      fetchFeedData(currentFilter, currentSearch || undefined)
+      mutate(buildApiUrl())
     }
-  }, [currentFilter, currentSearch, fetchFeedData])
+  }, [currentFilter, buildApiUrl])
 
   // Handle refresh
   const handleRefresh = useCallback(() => {
-    fetchFeedData(currentFilter, currentSearch || undefined)
-  }, [currentFilter, currentSearch, fetchFeedData])
+    mutate(buildApiUrl())
+  }, [buildApiUrl])
 
   // Loading state
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50">
         <Topbar 
@@ -106,19 +93,8 @@ export default function FeedPageClient({
           onRefresh={handleRefresh}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="space-y-4">
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 animate-pulse">
-                <div className="flex items-center space-x-3 mb-2">
-                  <div className="h-4 bg-gray-200 rounded w-16"></div>
-                  <div className="h-4 bg-gray-200 rounded w-24"></div>
-                  <div className="h-6 bg-gray-200 rounded w-20"></div>
-                </div>
-                <div className="h-6 bg-gray-200 rounded w-3/4 mb-2"></div>
-                <div className="h-4 bg-gray-200 rounded w-full mb-1"></div>
-                <div className="h-4 bg-gray-200 rounded w-2/3"></div>
-              </div>
-            ))}
+          <div className="text-center py-8">
+            <div className="text-gray-600">Loading…</div>
           </div>
         </div>
       </div>
@@ -177,7 +153,7 @@ export default function FeedPageClient({
     )
   }
 
-  // Success state
+  // Success state - map backend items to UI format
   return (
     <div className="min-h-screen bg-gray-50">
       <Topbar 
@@ -187,9 +163,21 @@ export default function FeedPageClient({
       />
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="space-y-4">
-          {feedData.items.map((item: NewsItem) => (
-            <FeedItem key={item.id} item={item} />
-          ))}
+          {feedData.items.map((item: NewsItem) => {
+            // Map backend item to UI item format
+            const uiItem = {
+              title: item.headline,
+              summary: item.description ?? '',
+              publishedAt: item.published_at ?? '',
+              imageUrl: item.image_url,
+              source: item.sources?.[0],
+              ticker: item.primary_entity,
+              // Keep original fields for existing FeedItem component
+              ...item
+            }
+            
+            return <FeedItem key={item.id} item={uiItem} />
+          })}
         </div>
       </div>
     </div>

@@ -8,13 +8,17 @@ export const startRSSIngestion = (): void => {
   console.log(`Starting RSS ingestion cron job with schedule: ${schedule}`);
   
   // Run initial ingestion on startup
-  ingestRSSFeeds().catch(error => {
+  ingestRSSFeeds().then(stats => {
+    console.log('Initial RSS ingestion completed:', stats);
+  }).catch(error => {
     console.error('Initial RSS ingestion failed:', error);
   });
   
   // Schedule recurring ingestion
   cron.schedule(schedule, () => {
-    ingestRSSFeeds().catch(error => {
+    ingestRSSFeeds().then(stats => {
+      console.log('Scheduled RSS ingestion completed:', stats);
+    }).catch(error => {
       console.error('Scheduled RSS ingestion failed:', error);
     });
   });

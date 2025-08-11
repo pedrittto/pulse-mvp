@@ -122,13 +122,14 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
 };
 
 // Main RSS ingestion function
-export const ingestRSSFeeds = async (): Promise<void> => {
+export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number; skipped: number; errors: number }> => {
   console.log('Starting RSS ingestion...');
   const startTime = Date.now();
   
   let totalFetched = 0;
   let totalAdded = 0;
   let totalSkipped = 0;
+  let totalErrors = 0;
 
   // Fetch all feeds in parallel
   const feedPromises = rssFeeds.map(fetchRSSFeed);
@@ -150,9 +151,12 @@ export const ingestRSSFeeds = async (): Promise<void> => {
       console.log(`${feedName}: ${items.length} fetched, ${added} added, ${skipped} skipped`);
     } else {
       console.error(`${feedName}: Failed to fetch - ${result.reason}`);
+      totalErrors++;
     }
   }
 
   const duration = Date.now() - startTime;
-  console.log(`RSS ingestion completed in ${duration}ms: ${totalFetched} fetched, ${totalAdded} added, ${totalSkipped} skipped`);
+  console.log(`RSS ingestion completed in ${duration}ms: ${totalFetched} fetched, ${totalAdded} added, ${totalSkipped} skipped, ${totalErrors} errors`);
+  
+  return { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors };
 };

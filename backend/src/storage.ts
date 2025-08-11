@@ -1,12 +1,12 @@
 import { NewsItem } from './types';
-import { db } from './config/firebase';
+import { getDb } from './lib/firestore';
 
 // Add news items to Firestore (with deduplication)
 export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; skipped: number }> => {
   let added = 0;
   let skipped = 0;
   
-  const newsCollection = db.collection('news');
+  const newsCollection = getDb().collection('news');
 
   for (const item of items) {
     try {
@@ -21,6 +21,12 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
 
       // Add new document
       await docRef.set(item);
+      console.log('[ingest][write]', { 
+        collection: 'news', 
+        id: item.id, 
+        headline: item.headline, 
+        published_at: item.published_at 
+      });
       added++;
     } catch (error) {
       console.error(`Error adding news item ${item.id}:`, error);
@@ -40,7 +46,7 @@ export const generateArticleHash = (headline: string, primaryEntity?: string): s
 // Get news items from Firestore with optional limit
 export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
   try {
-    const newsCollection = db.collection('news');
+    const newsCollection = getDb().collection('news');
     const snapshot = await newsCollection
       .orderBy('ingested_at', 'desc')
       .limit(limit)
