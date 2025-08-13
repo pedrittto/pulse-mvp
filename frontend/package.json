@@ -8,8 +8,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start -p 3000",
-    "start:railway": "next start -p $PORT"
+    "start": "node -e \"console.log('[BOOT] PORT=', process.env.PORT, 'SHA=', process.env.RAILWAY_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.COMMIT_SHA || 'unknown')\" && next start -H 0.0.0.0 -p $PORT",
+    "start:local": "next start -p 3000"
   },
   "dependencies": {
     "next": "14.0.0",

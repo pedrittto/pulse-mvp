@@ -25,16 +25,46 @@ const limiter = rateLimit({
   }
 });
 
+// CORS configuration
+const allowed = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// CORS middleware
+app.use(cors({
+  origin: function (origin, cb) {
+    // allow no-origin (curl/health) and exact matches
+    if (!origin || allowed.includes(origin)) return cb(null, true);
+    return cb(new Error('CORS blocked: ' + origin));
+  },
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Admin-Token'],
+  credentials: false,
+  maxAge: 86400,
+}));
+
+// Important: handle OPTIONS early
+app.options('*', cors({
+  origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)),
+  methods: ['GET','POST','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Admin-Token'],
+  credentials: false,
+  maxAge: 86400,
+}));
+
 // Middleware
 app.use(limiter);
 app.use(morgan('combined'));
-app.use(cors({
-  origin: config.allowedOrigins[0] === '*' ? true : config.allowedOrigins
-}));
 app.use(express.json());
 
 // Routes
 app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+// CORS test endpoint
+app.get('/cors-test', (req, res) => {
   res.json({ ok: true });
 });
 
