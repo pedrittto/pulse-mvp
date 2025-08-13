@@ -16,6 +16,7 @@
 !package.json
 !package-lock.json
 !tsconfig.json
+!tsconfig.build.json
 !next.config.js
 !postcss.config.js
 !tailwind.config.js
