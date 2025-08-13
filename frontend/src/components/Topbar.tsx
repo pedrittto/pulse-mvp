@@ -3,7 +3,6 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useCallback } from 'react'
 import { FilterType } from '@/types'
-import WatchlistModal from './WatchlistModal'
 
 interface FilterPillProps {
   filter: FilterType
@@ -36,7 +35,6 @@ interface TopbarProps {
 export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh }: TopbarProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [isWatchlistOpen, setIsWatchlistOpen] = useState(false)
   const [searchValue, setSearchValue] = useState('')
 
   const currentFilter = (searchParams.get('f') as FilterType) || 'all'
@@ -74,10 +72,7 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh }:
     return () => clearTimeout(timeoutId)
   }, [router, searchParams, onFilterChange, currentFilter])
 
-  const handleWatchlistSave = () => {
-    onWatchlistUpdate()
-    setIsWatchlistOpen(false)
-  }
+
 
   const filters: { filter: FilterType; label: string }[] = [
     { filter: 'all', label: 'All' },
@@ -95,7 +90,7 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh }:
             <h1 className="text-xl font-semibold text-gray-900">Pulse</h1>
             <div className="flex items-center space-x-2">
               <button
-                onClick={() => setIsWatchlistOpen(true)}
+                onClick={() => router.push('/watchlist')}
                 className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
               >
                 Watchlist
@@ -133,12 +128,6 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh }:
           </div>
         </div>
       </div>
-
-      <WatchlistModal
-        isOpen={isWatchlistOpen}
-        onClose={() => setIsWatchlistOpen(false)}
-        onSave={handleWatchlistSave}
-      />
     </>
   )
 }

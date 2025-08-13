@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon --watch src --exec \"ts-node src/index.ts\"",
     "build": "rimraf dist && tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "backfill:facts": "ts-node --transpile-only scripts/backfillFacts.ts"
   },
   "dependencies": {
     "axios": "^1.6.0",

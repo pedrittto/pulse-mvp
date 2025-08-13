@@ -4,6 +4,10 @@ import { promisify } from 'util';
 import { NewsItem, Impact } from '../types';
 import { rssFeeds } from '../config/rssFeeds';
 import { addNewsItems, generateArticleHash } from '../storage';
+import { sanitizeText } from '../utils/sanitize';
+import { scoreNews } from '../utils/scoring';
+import { composeHeadline, composeSummary } from '../utils/factComposer';
+import { getDb } from '../lib/firestore';
 
 const parseXML = promisify(parseString);
 
@@ -29,6 +33,45 @@ interface RSSFeed {
     channel?: RSSChannel[];
   };
 }
+
+// Filtering rules for actionable market news
+const shouldRejectArticle = (title: string, description: string, category?: string): boolean => {
+  const combinedText = `${title} ${description}`.toLowerCase();
+  
+  // Reject patterns - more comprehensive
+  const rejectPatterns = [
+    /\b(top|things to watch|best|worst|how to|opinion|guide|tips|review|ranking|list)\b/i,
+    /\b(cramer|podcast|interview|show|announcement|takeaways)\b/i,
+    /\b(lifestyle|culture|travel|education|college|university)\b/i,
+    /\b(sports|movie|celebrity|award|entertainment|retirement|smart moves)\b/i,
+    /\b(here are|these are|what to|when you|options when)\b/i
+  ];
+  
+  for (const pattern of rejectPatterns) {
+    if (pattern.test(combinedText)) {
+      return true;
+    }
+  }
+  
+  // Reject if headline is too long without financial content
+  const hasFinancialContent = /\b(\d+%|\$\d+|[A-Z]{2,4}\b|fed|ecb|boe|treasury|sec)\b/i.test(combinedText);
+  const wordCount = title.split(/\s+/).length;
+  if (wordCount > 15 && !hasFinancialContent) {
+    return true;
+  }
+  
+  // Reject if title starts with common non-actionable patterns
+  const titleLower = title.toLowerCase();
+  if (titleLower.startsWith('here are') || 
+      titleLower.startsWith('these are') || 
+      titleLower.startsWith('what to') ||
+      titleLower.includes('smart moves') ||
+      titleLower.includes('takeaways')) {
+    return true;
+  }
+  
+  return false;
+};
 
 // Extract primary entity from headline and content
 const extractPrimaryEntity = (headline: string, description?: string): string | undefined => {
@@ -69,27 +112,56 @@ const generateThreadId = (primaryEntity: string | undefined, pubDate: string): s
 
 // Normalize RSS item to NewsItem
 const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
-  const headline = item.title?.[0] || '';
-  const description = item.description?.[0] || '';
+  const rawHeadline = item.title?.[0] || '';
+  const rawDescription = item.description?.[0] || '';
   const link = item.link?.[0] || '';
   const pubDate = item.pubDate?.[0] || new Date().toISOString();
-  const primaryEntity = extractPrimaryEntity(headline, description);
+  
+  // Extract primary entity first
+  const primaryEntity = extractPrimaryEntity(rawHeadline, rawDescription);
+  
+  // Compose factual trader-focused content
+  const headline = composeHeadline({
+    title: rawHeadline,
+    description: rawDescription,
+    source: sourceName,
+    tickers: primaryEntity ? [primaryEntity] : []
+  });
+  
+  const description = composeSummary({
+    title: rawHeadline,
+    description: rawDescription,
+    source: sourceName,
+    tickers: primaryEntity ? [primaryEntity] : []
+  });
+  
   const threadId = generateThreadId(primaryEntity, pubDate);
   const ingestedAt = new Date().toISOString();
+
+  // Compute scoring
+  const score = scoreNews({
+    headline,
+    description,
+    sources: [sourceName],
+    tickers: primaryEntity ? [primaryEntity] : [],
+    published_at: pubDate
+  });
 
   // Ensure all fields have safe values (no undefined)
   return {
     id: generateArticleHash(headline, primaryEntity),
     thread_id: threadId,
-    headline: headline || 'Untitled',
-    why: description || '',
+    headline: headline,
+    why: description,
     sources: [sourceName],
     tickers: primaryEntity ? [primaryEntity] : [],
     published_at: pubDate,
     ingested_at: ingestedAt,
-    impact: 'L' as Impact,
-    confidence: 50,
-    primary_entity: primaryEntity || undefined
+    impact: score.impact as Impact,
+    impact_score: score.impact_score,
+    confidence: score.confidence,
+    primary_entity: primaryEntity || '',
+    category: score.tags?.includes('Macro') ? 'macro' : undefined
   };
 };
 
@@ -112,8 +184,21 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
       return [];
     }
 
-    const items = channel.item.map(item => normalizeRSSItem(item, feed.name));
-    console.log(`Parsed ${items.length} items from ${feed.name}`);
+    // Filter items before processing
+    const filteredItems = channel.item.filter(item => {
+      const title = item.title?.[0] || '';
+      const description = item.description?.[0] || '';
+      const category = item.category?.[0];
+      
+      if (shouldRejectArticle(title, description, category)) {
+        console.log(`[filter] Rejected: ${title.substring(0, 60)}...`);
+        return false;
+      }
+      return true;
+    });
+
+    const items = filteredItems.map(item => normalizeRSSItem(item, feed.name));
+    console.log(`Parsed ${items.length} items from ${feed.name} (filtered from ${channel.item.length})`);
     
     return items;
   } catch (error) {
@@ -131,6 +216,11 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
   let totalAdded = 0;
   let totalSkipped = 0;
   let totalErrors = 0;
+  let cleanedHeadlines = 0;
+  let cleanedDescriptions = 0;
+  let scoredItems = 0;
+  let highImpactItems = 0;
+  let macroItems = 0;
 
   // Fetch all feeds in parallel
   const feedPromises = rssFeeds.map(fetchRSSFeed);
@@ -145,6 +235,15 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
       const items = result.value;
       totalFetched += items.length;
       
+      // Count sanitized fields and scoring
+      items.forEach(item => {
+        if (item.headline && item.headline !== 'Untitled') cleanedHeadlines++;
+        if (item.why) cleanedDescriptions++;
+        scoredItems++;
+        if (item.impact === 'H') highImpactItems++;
+        if (item.category === 'macro') macroItems++;
+      });
+      
       const { added, skipped } = await addNewsItems(items);
       totalAdded += added;
       totalSkipped += skipped;
@@ -158,6 +257,22 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
 
   const duration = Date.now() - startTime;
   console.log(`RSS ingestion completed in ${duration}ms: ${totalFetched} fetched, ${totalAdded} added, ${totalSkipped} skipped, ${totalErrors} errors`);
+  console.log('[sanitize]', { cleaned_headlines: cleanedHeadlines, cleaned_descriptions: cleanedDescriptions });
+  console.log('[score]', { added: totalAdded, with_high: highImpactItems, with_macro: macroItems });
+  
+  // Write metrics to Firestore
+  try {
+    const db = getDb();
+    const metricsData = {
+      last_run: new Date().toISOString(),
+      counts: { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors }
+    };
+    
+    await db.collection('system').doc('ingest_status').set(metricsData, { merge: true });
+    console.log('[metrics] Updated ingest_status');
+  } catch (error) {
+    console.error('[metrics] Failed to update ingest_status:', error);
+  }
   
   return { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors };
 };

@@ -1,13 +1,35 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { NewsItem, Watchlist } from './types';
 import { getNewsItems } from './storage';
 import { getDb } from './lib/firestore';
 import { ingestRSSFeeds } from './ingest/rss';
+import { metrics } from './routes/metrics';
+
+// Type for watchlist data structure
+type WatchlistData = { 
+  tickers: string[]; 
+  keywords: string[]; 
+  thresholds?: Record<string, number>;
+  updated_at?: string;
+};
 
 // Helper function to get Firestore database instance
 export const getDbInstance = () => getDb();
 
 const router = express.Router();
+
+// Rate limiter for watchlist endpoint
+const watchlistLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10, // 10 requests per minute for watchlist updates
+  message: {
+    error: {
+      message: 'Too many watchlist updates, please try again later.',
+      code: 'RATE_LIMIT_EXCEEDED'
+    }
+  }
+});
 
 // Debug endpoint for Firestore access verification
 router.get('/debug/firestore', async (req, res) => {
@@ -193,6 +215,123 @@ router.post('/admin/ingest-now', async (req, res) => {
   }
 });
 
+// Helper function to purge a collection
+const purgeCollection = async (collectionName: string, limit: number = 500): Promise<number> => {
+  const db = getDb();
+  const collection = db.collection(collectionName);
+  let totalDeleted = 0;
+  
+  while (true) {
+    const snapshot = await collection.limit(limit).get();
+    
+    if (snapshot.empty) {
+      break;
+    }
+    
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+    
+    await batch.commit();
+    totalDeleted += snapshot.docs.length;
+    
+    // If we got fewer docs than the limit, we're done
+    if (snapshot.docs.length < limit) {
+      break;
+    }
+  }
+  
+  return totalDeleted;
+};
+
+// Admin endpoint for purging feed data
+router.post('/admin/purge-feed', async (req, res) => {
+  // Security checks
+  const adminToken = process.env.ADMIN_TOKEN;
+  if (!adminToken) {
+    return res.status(403).json({
+      ok: false,
+      error: 'ADMIN_TOKEN not configured',
+      code: 'ADMIN_TOKEN_MISSING'
+    });
+  }
+
+  const providedToken = req.headers['x-admin-token'];
+  if (providedToken !== adminToken) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Invalid admin token',
+      code: 'INVALID_TOKEN'
+    });
+  }
+
+  const confirm = req.query.confirm;
+  if (confirm !== 'PURGE') {
+    return res.status(400).json({
+      ok: false,
+      error: 'Must include confirm=PURGE query parameter',
+      code: 'CONFIRMATION_REQUIRED'
+    });
+  }
+
+  // Determine if real deletion is allowed
+  const allowRealDeletion = process.env.ADMIN_ALLOW_PURGE === 'true';
+  const requestedDryRun = req.query.dry === '1';
+  const dryRun = !allowRealDeletion || requestedDryRun;
+  const dryRunForced = !allowRealDeletion && !requestedDryRun;
+  
+
+  
+  const startTime = Date.now();
+
+  try {
+    const collections = ['news', 'trending_topics', 'trends', 'NewsCards'];
+    const deleted: { [key: string]: number } = {};
+
+    if (dryRun) {
+      // Dry run - just count documents
+      for (const collectionName of collections) {
+        try {
+          const snapshot = await getDb().collection(collectionName).get();
+          deleted[collectionName] = snapshot.size;
+        } catch (error) {
+          // Collection doesn't exist, count as 0
+          deleted[collectionName] = 0;
+        }
+      }
+    } else {
+      // Real purge
+      for (const collectionName of collections) {
+        try {
+          deleted[collectionName] = await purgeCollection(collectionName);
+        } catch (error) {
+          // Collection doesn't exist, count as 0
+          deleted[collectionName] = 0;
+        }
+      }
+    }
+
+    const tookMs = Date.now() - startTime;
+    
+    console.log('[purge]', { dryRun, deleted, tookMs });
+    
+    res.json({
+      ok: true,
+      dryRun,
+      dryRunForced,
+      deleted,
+      took_ms: tookMs
+    });
+  } catch (error) {
+    console.error('[purge] Error:', error);
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Demo watchlist
 const demoWatchlist: Watchlist = {
   user_id: "demo",
@@ -227,7 +366,49 @@ router.get('/feed', async (req, res) => {
     
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
-    const items = await getNewsItems(newsLimit);
+    let items = await getNewsItems(newsLimit);
+    
+    // Apply "My" filter if requested
+    if (filter === 'my') {
+      try {
+        // Get watchlist
+        const systemCollection = getDb().collection('system');
+        const watchlistDoc = await systemCollection.doc('watchlist_public').get();
+        
+        if (watchlistDoc.exists) {
+          const watchlist = watchlistDoc.data();
+          const wl: WatchlistData = (watchlist ? (watchlist as Partial<WatchlistData>) : {}) as WatchlistData;
+          
+          const tickers: string[] = Array.isArray(wl.tickers) ? wl.tickers : [];
+          const keywords: string[] = Array.isArray(wl.keywords) ? wl.keywords : [];
+          
+          if (tickers.length > 0 || keywords.length > 0) {
+            // Filter items based on watchlist
+            items = items.filter(item => {
+              // Check if any ticker matches
+              const tickerMatch = tickers.some((ticker: string) => 
+                ticker && item.tickers.some(itemTicker => 
+                  itemTicker.toUpperCase() === ticker.toUpperCase()
+                )
+              );
+              
+              // Check if any keyword matches in headline or why
+              const keywordMatch = keywords.some((keyword: string) => {
+                if (!keyword) return false;
+                const searchText = `${item.headline} ${item.why}`.toLowerCase();
+                return searchText.includes(keyword.toLowerCase());
+              });
+              
+              return tickerMatch || keywordMatch;
+            });
+          }
+        }
+      } catch (watchlistError) {
+        console.error('Error fetching watchlist for My filter:', watchlistError);
+        // Continue with unfiltered results if watchlist fetch fails
+      }
+    }
+    
     res.json({
       items,
       total: items.length
@@ -240,91 +421,148 @@ router.get('/feed', async (req, res) => {
   }
 });
 
-// GET /watchlist/:userId
-router.get('/watchlist/:userId', async (req, res) => {
+// GET /watchlist - Return public watchlist
+router.get('/watchlist', async (req, res) => {
   try {
-    const { userId } = req.params;
-    
-    // Return demo watchlist for demo user
-    if (userId === 'demo') {
-      return res.json(demoWatchlist);
-    }
-    
-    const watchlistsCollection = getDb().collection('watchlists');
-    const docRef = watchlistsCollection.doc(userId);
+    const systemCollection = getDb().collection('system');
+    const docRef = systemCollection.doc('watchlist_public');
     const docSnap = await docRef.get();
     
     if (docSnap.exists) {
-      res.json(docSnap.data() as Watchlist);
+      res.json(docSnap.data());
     } else {
-      // Return minimal default watchlist
-      const defaultWatchlist: Watchlist = {
-        user_id: userId,
+      // Return empty default watchlist
+      const defaultWatchlist = {
         tickers: [],
         keywords: [],
-        min_confidence: 50,
-        min_impact: "L"
+        thresholds: {},
+        updated_at: new Date().toISOString()
       };
       res.json(defaultWatchlist);
     }
   } catch (error) {
-    console.error('Error in /watchlist/:userId endpoint:', error);
+    console.error('Error in GET /watchlist endpoint:', error);
     res.status(500).json({
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
   }
 });
 
-// POST /watchlist
-router.post('/watchlist', async (req, res) => {
+// POST /watchlist - Hardened public watchlist endpoint
+router.post('/watchlist', watchlistLimiter, async (req, res) => {
   try {
-    const watchlist: Watchlist = req.body;
+    const body = (req.body ?? {}) as Partial<WatchlistData>;
+    const { tickers, keywords, thresholds } = body;
     
-    // Basic validation
-    if (!watchlist.user_id || typeof watchlist.user_id !== 'string') {
+    // Validate payload structure
+    if (tickers !== undefined && !Array.isArray(tickers)) {
       return res.status(400).json({ 
-        error: { message: 'user_id is required and must be a string' } 
+        error: { message: 'tickers must be an array of strings' } 
       });
     }
     
-    if (!Array.isArray(watchlist.tickers)) {
+    if (keywords !== undefined && !Array.isArray(keywords)) {
       return res.status(400).json({ 
-        error: { message: 'tickers must be an array' } 
+        error: { message: 'keywords must be an array of strings' } 
       });
     }
     
-    if (!Array.isArray(watchlist.keywords)) {
+    if (thresholds !== undefined && (typeof thresholds !== 'object' || thresholds === null)) {
       return res.status(400).json({ 
-        error: { message: 'keywords must be an array' } 
+        error: { message: 'thresholds must be an object' } 
       });
     }
     
-    if (typeof watchlist.min_confidence !== 'number' || 
-        watchlist.min_confidence < 0 || 
-        watchlist.min_confidence > 100) {
-      return res.status(400).json({ 
-        error: { message: 'min_confidence must be a number between 0 and 100' } 
-      });
+    // Validate and normalize tickers
+    let normalizedTickers: string[] = [];
+    const safeTickers: string[] = Array.isArray(tickers) ? tickers.map(String) : [];
+    if (safeTickers.length > 0) {
+      if (safeTickers.length > 30) {
+        return res.status(400).json({ 
+          error: { message: 'tickers limit exceeded (max 30)' } 
+        });
+      }
+      
+      // Validate each ticker: uppercase, A-Z, 0-9, .,- only; dedupe
+      const tickerSet = new Set<string>();
+      for (const ticker of safeTickers) {
+        if (typeof ticker !== 'string') continue;
+        
+        const normalizedTicker = ticker.toUpperCase().trim();
+        if (normalizedTicker.length === 0) continue;
+        
+        // Validate format: A-Z, 0-9, .,- only
+        if (!/^[A-Z0-9.,-]+$/.test(normalizedTicker)) {
+          return res.status(400).json({ 
+            error: { message: `Invalid ticker format: ${ticker}. Only A-Z, 0-9, .,- allowed` } 
+          });
+        }
+        
+        tickerSet.add(normalizedTicker);
+      }
+      normalizedTickers = Array.from(tickerSet);
     }
     
-    if (!['L', 'M', 'H'].includes(watchlist.min_impact)) {
-      return res.status(400).json({ 
-        error: { message: 'min_impact must be one of: L, M, H' } 
-      });
+    // Validate and normalize keywords
+    let normalizedKeywords: string[] = [];
+    const safeKeywords: string[] = Array.isArray(keywords) ? keywords.map(String) : [];
+    if (safeKeywords.length > 0) {
+      if (safeKeywords.length > 50) {
+        return res.status(400).json({ 
+          error: { message: 'keywords limit exceeded (max 50)' } 
+        });
+      }
+      
+      // Validate each keyword: 2-40 chars; dedupe
+      const keywordSet = new Set<string>();
+      for (const keyword of safeKeywords) {
+        if (typeof keyword !== 'string') continue;
+        
+        const normalizedKeyword = keyword.trim();
+        if (normalizedKeyword.length < 2 || normalizedKeyword.length > 40) {
+          return res.status(400).json({ 
+            error: { message: `Invalid keyword length: ${keyword}. Must be 2-40 characters` } 
+          });
+        }
+        
+        keywordSet.add(normalizedKeyword);
+      }
+      normalizedKeywords = Array.from(keywordSet);
     }
     
-    // Store in Firestore
-    const watchlistsCollection = getDb().collection('watchlists');
-    const docRef = watchlistsCollection.doc(watchlist.user_id);
-    await docRef.set(watchlist);
+    // Validate thresholds if provided
+    if (thresholds) {
+      for (const [key, value] of Object.entries(thresholds)) {
+        if (typeof value !== 'number' || value < 0 || value > 100) {
+          return res.status(400).json({ 
+            error: { message: `threshold ${key} must be a number between 0 and 100` } 
+          });
+        }
+      }
+    }
+    
+    // Create normalized watchlist
+    const normalizedWatchlist = {
+      tickers: normalizedTickers,
+      keywords: normalizedKeywords,
+      thresholds: thresholds || {},
+      updated_at: new Date().toISOString()
+    };
+    
+    // Store in system/watchlist_public doc (merge)
+    const systemCollection = getDb().collection('system');
+    const docRef = systemCollection.doc('watchlist_public');
+    await docRef.set(normalizedWatchlist, { merge: true });
+    
     console.log('[api][write]', { 
-      collection: 'watchlists', 
-      id: watchlist.user_id, 
-      tickers: watchlist.tickers.length,
-      keywords: watchlist.keywords.length
+      collection: 'system', 
+      id: 'watchlist_public', 
+      tickers: normalizedTickers.length,
+      keywords: normalizedKeywords.length,
+      thresholds: Object.keys(thresholds || {}).length
     });
     
-    res.status(200).json(watchlist);
+    res.status(200).json(normalizedWatchlist);
   } catch (error) {
     console.error('Error in POST /watchlist endpoint:', error);
     res.status(500).json({
@@ -332,5 +570,8 @@ router.post('/watchlist', async (req, res) => {
     });
   }
 });
+
+// Register metrics routes
+router.use(metrics);
 
 export default router;

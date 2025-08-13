@@ -1,5 +1,8 @@
 import { NewsItem } from './types';
 import { getDb } from './lib/firestore';
+import { sanitizeText } from './utils/sanitize';
+import { scoreNews } from './utils/scoring';
+import { composeHeadline, composeSummary } from './utils/factComposer';
 
 // Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
 const sanitizePayload = (payload: any): any => {
@@ -73,11 +76,13 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
       // Ensure required fields have safe defaults
       const safeItem = {
         ...sanitizedItem,
-        primary_entity: sanitizedItem.primary_entity || undefined,
+        primary_entity: sanitizedItem.primary_entity || '',
         sources: Array.isArray(sanitizedItem.sources) ? sanitizedItem.sources : [],
         tickers: Array.isArray(sanitizedItem.tickers) ? sanitizedItem.tickers : [],
         impact: sanitizedItem.impact || 'L',
-        confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50
+        impact_score: typeof sanitizedItem.impact_score === 'number' ? sanitizedItem.impact_score : 20,
+        confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50,
+        category: sanitizedItem.category || ''
       };
 
       // Add new document
@@ -118,7 +123,54 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
     
     const items: NewsItem[] = [];
     snapshot.forEach(doc => {
-      items.push(doc.data() as NewsItem);
+      const item = doc.data() as NewsItem;
+      
+      // Apply sanitization and fact composition as fallback for existing dirty data
+      const cleanedItem = {
+        ...item,
+        headline: sanitizeText(item.headline),
+        why: sanitizeText(item.why),
+        primary_entity: item.primary_entity || ''
+      };
+
+      // Backfill scoring if missing
+      if (!cleanedItem.impact_score || !cleanedItem.confidence || cleanedItem.impact === 'L') {
+        const score = scoreNews({
+          headline: cleanedItem.headline,
+          description: cleanedItem.why,
+          sources: cleanedItem.sources,
+          tickers: cleanedItem.tickers,
+          published_at: cleanedItem.published_at
+        });
+        
+        cleanedItem.impact = score.impact;
+        cleanedItem.impact_score = score.impact_score;
+        cleanedItem.confidence = score.confidence;
+        if (score.tags?.includes('Macro') && !cleanedItem.category) {
+          cleanedItem.category = 'macro';
+        }
+      }
+      
+      // Apply fact composition as fallback for headline/description
+      if (!cleanedItem.headline || cleanedItem.headline.length < 3) {
+        cleanedItem.headline = composeHeadline({
+          title: item.headline || '',
+          description: item.why || '',
+          source: item.sources?.[0] || '',
+          tickers: item.tickers || []
+        });
+      }
+      
+      if (!cleanedItem.why || cleanedItem.why.length < 5) {
+        cleanedItem.why = composeSummary({
+          title: item.headline || '',
+          description: item.why || '',
+          source: item.sources?.[0] || '',
+          tickers: item.tickers || []
+        });
+      }
+      
+      items.push(cleanedItem);
     });
     
     return items;

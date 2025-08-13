@@ -10,8 +10,10 @@ export interface NewsItem {
   published_at: string; // ISO string
   ingested_at: string; // ISO string
   impact: Impact;
+  impact_score: number; // 0-100
   confidence: number; // 0-100
   primary_entity?: string;
+  category?: string; // e.g., 'macro'
 }
 
 export interface Watchlist {
