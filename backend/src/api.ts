@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { NewsItem, Watchlist } from './types';
+// import { Watchlist } from './types';
 import { getNewsItems } from './storage';
 import { getDb } from './lib/firestore';
 import { ingestRSSFeeds } from './ingest/rss';
@@ -32,7 +32,7 @@ const watchlistLimiter = rateLimit({
 });
 
 // Debug endpoint for Firestore access verification
-router.get('/debug/firestore', async (req, res) => {
+router.get('/debug/firestore', async (_req, res) => {
   // Environment guard - only allow in non-production
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({
@@ -61,6 +61,7 @@ router.get('/debug/firestore', async (req, res) => {
       wroteAt: testData.ts,
       readBack
     });
+    return;
   } catch (error) {
     console.error('Firestore debug endpoint error:', error);
     console.error('Full stack trace:', error instanceof Error ? error.stack : 'No stack trace available');
@@ -70,11 +71,12 @@ router.get('/debug/firestore', async (req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
       code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
     });
+    return;
   }
 });
 
 // Debug endpoint for Firebase credentials verification
-router.get('/debug/creds', async (req, res) => {
+router.get('/debug/creds', async (_req, res) => {
   // Environment guard - only allow in non-production
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({
@@ -110,6 +112,7 @@ router.get('/debug/creds', async (req, res) => {
       canList,
       listErrorCode
     });
+    return;
   } catch (error) {
     console.error('Creds debug endpoint error:', error);
     console.error('Full stack trace:', error instanceof Error ? error.stack : 'No stack trace available');
@@ -119,11 +122,12 @@ router.get('/debug/creds', async (req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
       code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
     });
+    return;
   }
 });
 
 // Debug endpoint for listing Firestore collections
-router.get('/debug/firestore-list', async (req, res) => {
+router.get('/debug/firestore-list', async (_req, res) => {
   // Environment guard - only allow in non-production
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({
@@ -134,7 +138,7 @@ router.get('/debug/firestore-list', async (req, res) => {
   }
 
   try {
-    const { col = 'news', limit = 5 } = req.query;
+    const { col = 'news', limit = 5 } = _req.query;
     const collectionName = col as string;
     const limitNum = Math.min(parseInt(limit as string) || 5, 100); // Cap at 100
 
@@ -170,6 +174,7 @@ router.get('/debug/firestore-list', async (req, res) => {
       count: items.length,
       items
     });
+    return;
   } catch (error) {
     console.error('Firestore list debug endpoint error:', error);
     res.status(500).json({
@@ -177,11 +182,12 @@ router.get('/debug/firestore-list', async (req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
       code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
     });
+    return;
   }
 });
 
 // Admin endpoint for manual ingestion
-router.post('/admin/ingest-now', async (req, res) => {
+router.post('/admin/ingest-now', async (_req, res) => {
   // Environment guard - only allow in non-production
   if (process.env.NODE_ENV === 'production') {
     return res.status(404).json({
@@ -205,6 +211,7 @@ router.post('/admin/ingest-now', async (req, res) => {
       ...result,
       duration
     });
+    return;
   } catch (error) {
     console.error('[admin] Manual ingestion failed:', error);
     res.status(500).json({
@@ -212,6 +219,7 @@ router.post('/admin/ingest-now', async (req, res) => {
       error: error instanceof Error ? error.message : 'Unknown error',
       code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
     });
+    return;
   }
 });
 
@@ -246,7 +254,7 @@ const purgeCollection = async (collectionName: string, limit: number = 500): Pro
 };
 
 // Admin endpoint for purging feed data
-router.post('/admin/purge-feed', async (req, res) => {
+router.post('/admin/purge-feed', async (_req, res) => {
   // Security checks
   const adminToken = process.env.ADMIN_TOKEN;
   if (!adminToken) {
@@ -257,7 +265,7 @@ router.post('/admin/purge-feed', async (req, res) => {
     });
   }
 
-  const providedToken = req.headers['x-admin-token'];
+  const providedToken = _req.headers['x-admin-token'];
   if (providedToken !== adminToken) {
     return res.status(403).json({
       ok: false,
@@ -266,7 +274,7 @@ router.post('/admin/purge-feed', async (req, res) => {
     });
   }
 
-  const confirm = req.query.confirm;
+  const confirm = _req.query.confirm;
   if (confirm !== 'PURGE') {
     return res.status(400).json({
       ok: false,
@@ -277,7 +285,7 @@ router.post('/admin/purge-feed', async (req, res) => {
 
   // Determine if real deletion is allowed
   const allowRealDeletion = process.env.ADMIN_ALLOW_PURGE === 'true';
-  const requestedDryRun = req.query.dry === '1';
+  const requestedDryRun = _req.query.dry === '1';
   const dryRun = !allowRealDeletion || requestedDryRun;
   const dryRunForced = !allowRealDeletion && !requestedDryRun;
   
@@ -323,33 +331,35 @@ router.post('/admin/purge-feed', async (req, res) => {
       deleted,
       took_ms: tookMs
     });
+    return;
   } catch (error) {
     console.error('[purge] Error:', error);
     res.status(500).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Unknown error'
     });
+    return;
   }
 });
 
-// Demo watchlist
-const demoWatchlist: Watchlist = {
-  user_id: "demo",
-  tickers: ["AAPL", "GOOGL", "MSFT"],
-  keywords: ["AI", "earnings", "guidance"],
-  min_confidence: 70,
-  min_impact: "M",
-  quiet_hours: {
-    start: "22:00",
-    end: "08:00"
-  }
-};
+// Demo watchlist (commented out as unused)
+// const demoWatchlist: Watchlist = {
+//   user_id: "demo",
+//   tickers: ["AAPL", "GOOGL", "MSFT"],
+//   keywords: ["AI", "earnings", "guidance"],
+//   min_confidence: 70,
+//   min_impact: "M",
+//   quiet_hours: {
+//     start: "22:00",
+//     end: "08:00"
+//   }
+// };
 
 // GET /feed
 router.get('/feed', async (req, res) => {
   try {
     // Accept query params: filter, q, limit, after
-    const { filter, q, limit, after } = req.query;
+    const { filter, limit } = req.query;
     
     // Validate query params (basic validation for now)
     if (filter && !['my', 'market-moving', 'macro', 'all'].includes(filter as string)) {
@@ -413,16 +423,18 @@ router.get('/feed', async (req, res) => {
       items,
       total: items.length
     });
+    return;
   } catch (error) {
     console.error('Error in /feed endpoint:', error);
     res.status(500).json({
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
+    return;
   }
 });
 
 // GET /watchlist - Return public watchlist
-router.get('/watchlist', async (req, res) => {
+router.get('/watchlist', async (_req, res) => {
   try {
     const systemCollection = getDb().collection('system');
     const docRef = systemCollection.doc('watchlist_public');
@@ -563,11 +575,13 @@ router.post('/watchlist', watchlistLimiter, async (req, res) => {
     });
     
     res.status(200).json(normalizedWatchlist);
+    return;
   } catch (error) {
     console.error('Error in POST /watchlist endpoint:', error);
     res.status(500).json({
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
+    return;
   }
 });
 

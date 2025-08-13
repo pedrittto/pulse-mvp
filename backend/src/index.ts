@@ -6,7 +6,7 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import { config } from './config/env';
+// import { config } from './config/env';
 import apiRoutes from './api';
 import { startRSSIngestion } from './cron';
 
@@ -59,19 +59,19 @@ app.use(morgan('combined'));
 app.use(express.json());
 
 // Routes
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
 // CORS test endpoint
-app.get('/cors-test', (req, res) => {
+app.get('/cors-test', (_req, res) => {
   res.json({ ok: true });
 });
 
 app.use('/', apiRoutes);
 
 // Error handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err.stack);
   res.status(500).json({
     error: {
@@ -82,7 +82,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // 404 handler
-app.use('*', (req, res) => {
+app.use('*', (_req, res) => {
   res.status(404).json({
     error: {
       message: 'Route not found',

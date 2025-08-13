@@ -4,7 +4,7 @@ import { promisify } from 'util';
 import { NewsItem, Impact } from '../types';
 import { rssFeeds } from '../config/rssFeeds';
 import { addNewsItems, generateArticleHash } from '../storage';
-import { sanitizeText } from '../utils/sanitize';
+// import { sanitizeText } from '../utils/sanitize';
 import { scoreNews } from '../utils/scoring';
 import { composeHeadline, composeSummary } from '../utils/factComposer';
 import { getDb } from '../lib/firestore';
@@ -35,7 +35,7 @@ interface RSSFeed {
 }
 
 // Filtering rules for actionable market news
-const shouldRejectArticle = (title: string, description: string, category?: string): boolean => {
+const shouldRejectArticle = (title: string, description: string, _category?: string): boolean => {
   const combinedText = `${title} ${description}`.toLowerCase();
   
   // Reject patterns - more comprehensive
@@ -114,7 +114,7 @@ const generateThreadId = (primaryEntity: string | undefined, pubDate: string): s
 const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
   const rawHeadline = item.title?.[0] || '';
   const rawDescription = item.description?.[0] || '';
-  const link = item.link?.[0] || '';
+  // const _link = item.link?.[0] || '';
   const pubDate = item.pubDate?.[0] || new Date().toISOString();
   
   // Extract primary entity first

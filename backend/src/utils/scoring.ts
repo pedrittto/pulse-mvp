@@ -1,3 +1,5 @@
+import { scoreConfidenceV2, CONF_MIN, CONF_MAX, clamp } from './confidenceV2';
+
 export type Score = { 
   impact_score: number; 
   impact: 'L'|'M'|'H'; 
@@ -120,15 +122,63 @@ export function scoreNews(item: {
 
   // Cap & floor
   impact_score = Math.max(0, Math.min(100, impact_score));
-  confidence = Math.max(20, Math.min(95, confidence));
+  
+  // Compute confidence using v1 or v2 based on feature flag
+  let finalConfidence: number;
+  
+  if (process.env.CONFIDENCE_V2 === 'true') {
+    // Use confidence v2 with five pillars
+    try {
+      // Extract domain from source name (fallback to source name if no domain)
+      const sourceDomains = sources.map(source => {
+        // Simple domain extraction - in real implementation, this would be more robust
+        const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
+        return { domain, isPrimary: false };
+      });
+      
+      const v2Inputs = {
+        publishedAt: published_at ? new Date(published_at) : new Date(),
+        now: new Date(),
+        sources: sourceDomains,
+        headline: item.headline || '',
+        body: item.description || '',
+        tags: tags.length > 0 ? tags : undefined,
+        impact_score: Math.round(impact_score),
+        market: undefined // No market data available in current implementation
+      };
+      
+      const v2Score = scoreConfidenceV2(v2Inputs);
+      finalConfidence = v2Score; // Don't clamp here
+      
+      // Log comparison if enabled
+      if (process.env.CONFIDENCE_V2_COMPARE === '1') {
+        console.log(JSON.stringify({
+          type: 'confidence_compare',
+          headline: item.headline?.substring(0, 50),
+          v1: Math.round(confidence), // Don't clamp here
+          v2: Math.round(v2Score), // Don't clamp here
+          sources: sources
+        }));
+      }
+    } catch (error) {
+      console.error('Error computing confidence v2, falling back to v1:', error);
+      finalConfidence = confidence; // Don't clamp here
+    }
+  } else {
+    // Use original v1 confidence
+    finalConfidence = confidence; // Don't clamp here
+  }
 
   // Label
   const impact: 'L'|'M'|'H' = impact_score >= 70 ? 'H' : impact_score >= 45 ? 'M' : 'L';
 
+  // Apply clamp once, right before serializing to API response
+  const clampedConfidence = clamp(finalConfidence, CONF_MIN, CONF_MAX);
+
   return {
     impact_score: Math.round(impact_score),
     impact,
-    confidence: Math.round(confidence),
+    confidence: Math.round(clampedConfidence),
     tags: tags.length > 0 ? tags : undefined
   };
 }
