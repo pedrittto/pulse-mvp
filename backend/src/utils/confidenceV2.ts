@@ -1,14 +1,15 @@
 import { getSourceTier } from './sourceTiers';
 
 /**
- * Confidence V2 - Five Pillar Scoring System
+ * Confidence V2.1 — High-Contrast Scoring System
  * 
- * Pillars:
- * 1. Source+Time (30%) - Source credibility + freshness
- * 2. Cross-source confirmations (25%) - Multiple independent sources
- * 3. Macro/Trend fit (20%) - Alignment with market trends
- * 4. Legal/Reputational cost (15%) - Source accountability
- * 5. Early market reaction proxy (10%) - Market response signals
+ * Weights (sum to 1.0):
+ *  W = { P1:0.35, P2:0.25, P3:0.20, P4:0.15, P5:0.05 }
+ * 
+ * Final computation:
+ * 1) Compute five pillars P1..P5 in [0..1], then weighted sum: S = Σ (W_i * P_i)
+ * 2) Contrast expansion around 0.5: C = clamp01( 0.5 + 1.6 * (S - 0.5) )
+ * 3) Map to 20..95 and round to integer: confidence = clamp( 20 + round(75 * C), 20, 95 )
  */
 
 // Core constants
@@ -16,46 +17,36 @@ export const CONF_MIN = 20;
 export const CONF_MAX = 95;
 
 // Pillar weights (sum = 1.0)
-export const W_SOURCE_TIME = 0.30;
-export const W_CONFIRM = 0.25;
-export const W_TREND_FIT = 0.20;
-export const W_LEGAL_RISK = 0.15;
-export const W_MARKET_RX = 0.10;
+export const W_P1 = 0.35; // Source + Freshness
+export const W_P2 = 0.25; // Cross-source confirmations
+export const W_P3 = 0.20; // Macro/Trend fit
+export const W_P4 = 0.15; // Legal/Reputational accountability
+export const W_P5 = 0.05; // Market reaction proxy
 
-// Source+Time sub-weights and thresholds
-export const FRESH_MIN = 0;
-export const FRESH_MAX_MINUTES = 120; // full credit if <=5 min, linear decay to 0 by 120 min
+// Freshness half-life (minutes)
+export const FRESHNESS_HALF_LIFE = 180; // τ=180 minutes
 
-// Confirmation thresholds
-export const CONFIRM_MIN = 1;
-export const CONFIRM_GOOD = 2;
-export const CONFIRM_STRONG = 3; // distinct independent sources
-
-// Trend/Macro fit
-export const TREND_ALIGN_BOOST = 1;
-export const TREND_CONTRA_FLAG = -1; // heuristic sign
-
-// Source tiers (legal/reputational cost proxies)
-export const SOURCE_TIERS = {
-  regulator: 1.0, // SEC, ESMA, central banks, gov gazettes
-  primary_corp: 0.8, // official company PR/8-K/etc.
-  tier1_media: 0.6, // Bloomberg, Reuters, FT, WSJ
-  tier2_media: 0.4,
-  social_verified: 0.2,
-  anon_social: 0.0
-} as const;
+// Anti-rumor penalty
+export const ANTI_RUMOR_PENALTY = 0.30;
 
 // Helper functions
+export function clamp01(x: number): number {
+  return Math.max(0, Math.min(1, x));
+}
+
+export function contrast(S: number): number {
+  return clamp01(0.5 + 1.6 * (S - 0.5));
+}
+
+export function toPercent(C: number): number {
+  return Math.max(20, Math.min(95, 20 + Math.round(75 * C)));
+}
+
 export function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
 }
 
-export function linMap(x: number, x0: number, x1: number, y0: number, y1: number): number {
-  if (x1 === x0) return y0;
-  return y0 + (y1 - y0) * (x - x0) / (x1 - x0);
-}
-
-// Input type for confidence v2 scoring
+// Input type for confidence v2.1 scoring
 export type PillarInputs = {
   publishedAt: Date;
   now: Date; // for freshness
@@ -68,133 +59,235 @@ export type PillarInputs = {
   market?: { realizedMoveBps?: number; volumeSpike?: number }; // relative to baseline (z-score or ratio)
 };
 
-/**
- * Score confidence using the five-pillar system
- * @param i - Pillar inputs
- * @returns Confidence score (0-100 before clamp)
- */
-export function scoreConfidenceV2(i: PillarInputs): number {
-  // Pillar 1: Source+Time (30%)
-  const pillar1 = computeSourceTimePillar(i);
+// Debug output type
+export type ConfidenceDebug = {
+  P1: number;
+  P2: number;
+  P3: number;
+  P4: number;
+  P5: number;
+  S: number;
+  C: number;
+  tiers: number[];
+  k: number;
+  freshness: number;
+  penalties: number;
+  tagsTaken: string[];
+  independenceBonus: number;
+};
+
+// Main scoring function
+export function scoreConfidenceV2(inputs: PillarInputs): { raw: number; final: number; debug?: ConfidenceDebug } {
+  // Pillar 1: Source + Freshness (weight 0.35)
+  const pillar1 = computePillar1(inputs);
   
-  // Pillar 2: Cross-source confirmations (25%)
-  const pillar2 = computeConfirmationPillar(i);
+  // Pillar 2: Cross-source confirmations (weight 0.25)
+  const pillar2 = computePillar2(inputs);
   
-  // Pillar 3: Macro/Trend fit (20%)
-  const pillar3 = computeTrendFitPillar(i);
+  // Pillar 3: Macro/Trend fit (weight 0.20)
+  const pillar3 = computePillar3(inputs);
   
-  // Pillar 4: Legal/Reputational risk (15%)
-  const pillar4 = computeLegalRiskPillar(i);
+  // Pillar 4: Legal/Reputational accountability (weight 0.15)
+  const pillar4 = computePillar4(inputs);
   
-  // Pillar 5: Market reaction proxy (10%)
-  const pillar5 = computeMarketReactionPillar(i);
+  // Pillar 5: Market reaction proxy (weight 0.05)
+  const pillar5 = computePillar5(inputs);
   
-  // Aggregate weighted score
-  const raw = 100 * (
-    W_SOURCE_TIME * pillar1 +
-    W_CONFIRM * pillar2 +
-    W_TREND_FIT * pillar3 +
-    W_LEGAL_RISK * pillar4 +
-    W_MARKET_RX * pillar5
-  );
+  // Weighted sum
+  const S = W_P1 * pillar1 + W_P2 * pillar2 + W_P3 * pillar3 + W_P4 * pillar4 + W_P5 * pillar5;
   
-  return Math.round(raw);
+  // Contrast expansion
+  const C = contrast(S);
+  
+  // Map to final range
+  const final = toPercent(C);
+  
+  // Raw score (before clamp, via C * 100)
+  const raw = Math.round(C * 100);
+  
+  // Debug information
+  const debug: ConfidenceDebug = {
+    P1: pillar1,
+    P2: pillar2,
+    P3: pillar3,
+    P4: pillar4,
+    P5: pillar5,
+    S,
+    C,
+    tiers: inputs.sources.map(s => getSourceTier(s.domain)),
+    k: new Set(inputs.sources.map(s => s.domain)).size,
+    freshness: computeFreshness(inputs.publishedAt, inputs.now),
+    penalties: computeAntiRumorPenalty(inputs.headline, inputs.body),
+    tagsTaken: inputs.tags || [],
+    independenceBonus: computeIndependenceBonus(inputs.sources)
+  };
+  
+  return { raw, final, debug };
 }
 
 /**
- * Pillar 1: Source+Time (30%)
- * freshnessScore = linear 1.0 → 0.0 between 0–120 min (cap at 0).
- * sourceTier = max tier among sources using domain mapping lists.
- * pillar = 100 * (0.6*sourceTier + 0.4*freshnessScore).
+ * P1 — Source + Freshness (weight 0.35)
+ * - Tier T ∈ {1.0, 0.9, 0.8, 0.6, 0.3, 0.0}
+ * - Freshness F = exp( - minutes_since_pub / 180 )
+ * - Anti-rumor penalty R = 0.30 if headline/body matches rumor patterns
+ * - Formula: P1 = max(0, 0.7*T + 0.3*F − R)
  */
-function computeSourceTimePillar(i: PillarInputs): number {
-  // Calculate freshness score
-  const minutesDiff = (i.now.getTime() - i.publishedAt.getTime()) / (1000 * 60);
-  const freshnessScore = minutesDiff <= 5 ? 1.0 : 
-    minutesDiff >= FRESH_MAX_MINUTES ? 0.0 :
-    linMap(minutesDiff, 5, FRESH_MAX_MINUTES, 1.0, 0.0);
-  
+function computePillar1(inputs: PillarInputs): number {
   // Calculate source tier (max among all sources)
-  const sourceTiers = i.sources.map(s => getSourceTier(s.domain));
-  const maxSourceTier = Math.max(...sourceTiers, 0);
+  const sourceTiers = inputs.sources.map(s => getSourceTier(s.domain));
+  const T = Math.max(...sourceTiers, 0);
   
-  // Combine: 60% source tier + 40% freshness
-  return 0.6 * maxSourceTier + 0.4 * freshnessScore;
+  // Calculate freshness
+  const F = computeFreshness(inputs.publishedAt, inputs.now);
+  
+  // Calculate anti-rumor penalty
+  const R = computeAntiRumorPenalty(inputs.headline, inputs.body);
+  
+  // Formula: P1 = max(0, 0.7*T + 0.3*F − R)
+  return Math.max(0, 0.7 * T + 0.3 * F - R);
 }
 
 /**
- * Pillar 2: Cross-source confirmations (25%)
- * k = count of independent sources (unique registrable domains) with non-trivial mention.
- * map: k=1 → 0.0, k=2 → 0.7, k≥3 → 1.0.
+ * P2 — Cross-source confirmations (weight 0.25)
+ * - k = number of UNIQUE domains (dedupe by registered domain)
+ * - Base mapping: k=1 → 0.0, k=2 → 0.7, k≥3 → 1.0
+ * - Independence bonus +0.10 if confirmations span >1 source class
+ * - Formula: P2 = clamp01( base(k) + independence_bonus )
  */
-function computeConfirmationPillar(i: PillarInputs): number {
-  const uniqueDomains = new Set(i.sources.map(s => s.domain));
+function computePillar2(inputs: PillarInputs): number {
+  const uniqueDomains = new Set(inputs.sources.map(s => s.domain));
   const k = uniqueDomains.size;
   
-  if (k >= CONFIRM_STRONG) return 1.0;
-  if (k === CONFIRM_GOOD) return 0.7;
-  if (k === CONFIRM_MIN) return 0.0; // Fixed: k=1 should return 0.0, not 0.25
-  return 0.0;
+  // Base mapping
+  let base = 0.0;
+  if (k === 1) base = 0.0;
+  else if (k === 2) base = 0.7;
+  else if (k >= 3) base = 1.0;
+  
+  // Independence bonus
+  const independenceBonus = computeIndependenceBonus(inputs.sources);
+  
+  // Formula: P2 = clamp01( base(k) + independence_bonus )
+  return clamp01(base + independenceBonus);
 }
 
 /**
- * Pillar 3: Macro/Trend fit (20%)
- * Use existing heuristics: macro keywords, impact_score, and a simple align metric:
- * align = +1 if macro/impact_score≥60 and headline lacks "rumor/opinion"; 
- * -1 if it contains contra words (e.g., "denies", "rumor", "opinion"), else 0.
- * pillar = (align>0 ? 1.0 : align<0 ? 0.0 : 0.5).
+ * P3 — Macro/Trend fit (weight 0.20)
+ * - Use existing tags/keywords. Scoring (choose the max applicable, do NOT sum):
+ *   macro fit (CPI/FOMC/OPEC/payrolls) → 0.8
+ *   sectoral fit (earnings, M&A, guidance) → 0.6
+ *   purely informational w/o hard data → 0.4
+ *   opinion/feature → 0.1
+ * - Formula: P3 ∈ {0.8, 0.6, 0.4, 0.1}
  */
-function computeTrendFitPillar(i: PillarInputs): number {
-  const isMacro = i.tags?.includes('Macro') || false;
-  const hasHighImpact = (i.impact_score || 0) >= 60;
-  const text = `${i.headline} ${i.body}`.toLowerCase();
+function computePillar3(inputs: PillarInputs): number {
+  const text = `${inputs.headline} ${inputs.body}`.toLowerCase();
+  const tags = inputs.tags || [];
   
-  // Check for contra words
-  const contraWords = ['denies', 'rumor', 'opinion', 'op-ed', 'column', 'reportedly', 'sources say'];
-  const hasContraWords = contraWords.some(word => text.includes(word));
+  // Check for macro keywords
+  const macroKeywords = ['cpi', 'fomc', 'opec', 'payrolls', 'fed', 'interest rate', 'ecb', 'boe'];
+  const hasMacroKeywords = macroKeywords.some(keyword => text.includes(keyword));
   
-  let align = 0;
-  if (isMacro && hasHighImpact && !hasContraWords) {
-    align = TREND_ALIGN_BOOST;
-  } else if (hasContraWords) {
-    align = TREND_CONTRA_FLAG;
+  // Check for sectoral keywords
+  const sectoralKeywords = ['earnings', 'quarterly', 'annual', 'guidance', 'acquisition', 'merger', 'm&a'];
+  const hasSectoralKeywords = sectoralKeywords.some(keyword => text.includes(keyword));
+  
+  // Check for opinion/feature keywords
+  const opinionKeywords = ['opinion', 'op-ed', 'column', 'analysis', 'commentary', 'view'];
+  const hasOpinionKeywords = opinionKeywords.some(keyword => text.includes(keyword));
+  
+  // Choose the max applicable score
+  if (hasMacroKeywords) return 0.8;
+  if (hasSectoralKeywords) return 0.6;
+  if (hasOpinionKeywords) return 0.1;
+  return 0.4; // purely informational w/o hard data
+}
+
+/**
+ * P4 — Legal/Reputational accountability (weight 0.15)
+ * - Official named org/channel → 1.0
+ * - Journalist + Tier-1 newsroom → 0.8
+ * - Signed blog/analysis → 0.5
+ * - Anonymous / uncontactable → 0.0
+ * - Formula: P4 = accountability_score
+ */
+function computePillar4(inputs: PillarInputs): number {
+  const sourceTiers = inputs.sources.map(s => getSourceTier(s.domain));
+  const maxTier = Math.max(...sourceTiers, 0);
+  
+  // Map tiers to accountability scores
+  if (maxTier >= 1.0) return 1.0; // regulator
+  if (maxTier >= 0.8) return 0.8; // corporate PR/IR
+  if (maxTier >= 0.6) return 0.8; // Tier-1 media
+  if (maxTier >= 0.4) return 0.5; // Tier-2 media
+  if (maxTier >= 0.2) return 0.5; // signed blog/social
+  return 0.0; // anonymous/throwaway social
+}
+
+/**
+ * P5 — Market reaction proxy (weight 0.05)
+ * - If no market data → neutral 0.5 (so P5 doesn't depress the score)
+ * - If available: compute percentile of |Δ%| vs last N for the most directly affected instrument
+ * - Formula: P5 = 0.2 + 0.8 * pct (small moves≈0.2, very large≈1.0)
+ */
+function computePillar5(inputs: PillarInputs): number {
+  if (!inputs.market) {
+    return 0.5; // neutral so P5 doesn't depress the score
   }
   
-  if (align > 0) return 1.0;
-  if (align < 0) return 0.0;
-  return 0.5;
-}
-
-/**
- * Pillar 4: Legal/Reputational risk (15%)
- * pillar = top sourceTier (same as above). If none matched → 0.2 baseline.
- */
-function computeLegalRiskPillar(i: PillarInputs): number {
-  const sourceTiers = i.sources.map(s => getSourceTier(s.domain));
-  const maxSourceTier = Math.max(...sourceTiers, 0);
+  const { realizedMoveBps, volumeSpike } = inputs.market;
   
-  return maxSourceTier > 0 ? maxSourceTier : 0.2; // baseline if no tier matched
-}
-
-/**
- * Pillar 5: Market reaction proxy (10%)
- * If market exists: normalize realizedMoveBps (0→0, 30bps→1.0 clipped) and 
- * volumeSpike (1.0→0, ≥2.0→1.0 clipped), average them. Else 0.
- */
-function computeMarketReactionPillar(i: PillarInputs): number {
-  if (!i.market) return 0.0;
+  // For now, use a simple mapping since we don't have percentile data
+  // This is a placeholder - in production, you'd compute actual percentiles
+  let movePercentile = 0.5; // default neutral
   
-  const { realizedMoveBps, volumeSpike } = i.market;
-  
-  let moveScore = 0.0;
   if (realizedMoveBps !== undefined) {
-    moveScore = clamp(realizedMoveBps / 30, 0, 1); // normalize to 30bps = 1.0
+    // Simple mapping: 0bps = 0.2, 30bps = 0.8, 60bps+ = 1.0
+    const absMove = Math.abs(realizedMoveBps);
+    if (absMove <= 5) movePercentile = 0.2;
+    else if (absMove <= 15) movePercentile = 0.4;
+    else if (absMove <= 30) movePercentile = 0.6;
+    else if (absMove <= 60) movePercentile = 0.8;
+    else movePercentile = 1.0;
   }
   
-  let volumeScore = 0.0;
-  if (volumeSpike !== undefined) {
-    volumeScore = clamp((volumeSpike - 1.0) / 1.0, 0, 1); // normalize: 1.0→0, 2.0→1.0
-  }
+  // Formula: P5 = 0.2 + 0.8 * pct
+  return 0.2 + 0.8 * movePercentile;
+}
+
+// Helper functions
+function computeFreshness(publishedAt: Date, now: Date): number {
+  const minutesDiff = (now.getTime() - publishedAt.getTime()) / (1000 * 60);
+  return Math.exp(-minutesDiff / FRESHNESS_HALF_LIFE);
+}
+
+function computeAntiRumorPenalty(headline: string, body: string): number {
+  const text = `${headline} ${body}`.toLowerCase();
+  const rumorPattern = /(rumor|opinion|analysis|hearsay|denies|could|might)/i;
+  return rumorPattern.test(text) ? ANTI_RUMOR_PENALTY : 0.0;
+}
+
+function computeIndependenceBonus(sources: Array<{ domain: string; isPrimary: boolean }>): number {
+  if (sources.length < 2) return 0.0;
   
-  return (moveScore + volumeScore) / 2;
+  const sourceTiers = sources.map(s => getSourceTier(s.domain));
+  const uniqueTiers = new Set(sourceTiers);
+  
+  // Check if confirmations span >1 source class
+  // Source classes: regulator(1.0), corporate(0.8), tier1(0.6), tier2(0.4), social(0.2), anonymous(0.0)
+  const hasRegulator = sourceTiers.some(tier => tier >= 1.0);
+  const hasCorporate = sourceTiers.some(tier => tier >= 0.8 && tier < 1.0);
+  const hasTier1 = sourceTiers.some(tier => tier >= 0.6 && tier < 0.8);
+  const hasTier2 = sourceTiers.some(tier => tier >= 0.4 && tier < 0.6);
+  const hasSocial = sourceTiers.some(tier => tier >= 0.2 && tier < 0.4);
+  
+  const sourceClasses = [hasRegulator, hasCorporate, hasTier1, hasTier2, hasSocial].filter(Boolean);
+  
+  return sourceClasses.length > 1 ? 0.10 : 0.0;
+}
+
+// Legacy function for backward compatibility
+export function scoreConfidenceV2Legacy(i: PillarInputs): number {
+  const result = scoreConfidenceV2(i);
+  return result.final;
 }

@@ -1,6 +1,14 @@
 /**
- * Source Tier Mapping
+ * Source Tier Mapping for Confidence V2.1
  * Maps domains and URLs to source credibility tiers
+ * 
+ * Tier values:
+ * 1.0 - regulator (SEC, ECB, etc.)
+ * 0.9 - corporate PR/IR (official newsroom/8-K)
+ * 0.8 - Tier-1 media (Bloomberg/FT/WSJ/Reuters/CNBC)
+ * 0.6 - Tier-2 media / quality trade press
+ * 0.3 - signed blog/social (named account)
+ * 0.0 - anonymous/throwaway social
  */
 
 // Regulator domains (highest credibility)
@@ -90,37 +98,37 @@ export const SOCIAL_VERIFIED = [
  * Get source tier based on domain and URL
  * @param domain - The registrable domain (e.g., 'bloomberg.com')
  * @param url - Full URL for additional context
- * @returns Tier value (1.0, 0.8, 0.6, 0.4, 0.2, 0.0)
+ * @returns Tier value (1.0, 0.9, 0.8, 0.6, 0.3, 0.0)
  */
 export function getSourceTier(domain: string, url?: string): number {
   const domainLower = domain.toLowerCase();
   const urlLower = url?.toLowerCase() || '';
 
-  // Check regulators first (highest priority)
+  // Check regulators first (highest priority) - Tier 1.0
   if (REGULATORS.some(reg => domainLower.includes(reg))) {
     return 1.0;
   }
 
-  // Check primary corporate communications
+  // Check primary corporate communications - Tier 0.9
   if (PRIMARY_CORP_HINTS.some(hint => urlLower.includes(hint))) {
+    return 0.9;
+  }
+
+  // Check tier 1 media - Tier 0.8
+  if (TIER1_MEDIA.some(media => domainLower.includes(media))) {
     return 0.8;
   }
 
-  // Check tier 1 media
-  if (TIER1_MEDIA.some(media => domainLower.includes(media))) {
+  // Check tier 2 media - Tier 0.6
+  if (TIER2_MEDIA.some(media => domainLower.includes(media))) {
     return 0.6;
   }
 
-  // Check tier 2 media
-  if (TIER2_MEDIA.some(media => domainLower.includes(media))) {
-    return 0.4;
-  }
-
-  // Check social media (verified accounts)
+  // Check social media (verified accounts) - Tier 0.3
   if (SOCIAL_VERIFIED.some(social => domainLower.includes(social))) {
-    return 0.2;
+    return 0.3;
   }
 
-  // Default to anonymous social/unknown
+  // Default to anonymous social/unknown - Tier 0.0
   return 0.0;
 }

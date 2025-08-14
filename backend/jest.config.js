@@ -6,4 +6,9 @@ module.exports = {
     'src/**/*.ts',
     '!src/**/*.d.ts',
   ],
+  globals: {
+    'ts-jest': {
+      tsconfig: 'tsconfig.test.json'
+    }
+  }
 };

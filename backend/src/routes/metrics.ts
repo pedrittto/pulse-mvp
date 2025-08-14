@@ -13,7 +13,11 @@ function computeConfidenceMetrics(confidences: number[]) {
       confidence_lt40: 0,
       confidence_40_59: 0,
       confidence_60_79: 0,
-      confidence_gte80: 0
+      confidence_gte80: 0,
+      confidence_histogram: {
+        "20-29": 0, "30-39": 0, "40-49": 0, "50-59": 0, "60-69": 0,
+        "70-79": 0, "80-89": 0, "90-95": 0
+      }
     };
   }
 
@@ -23,12 +27,25 @@ function computeConfidenceMetrics(confidences: number[]) {
   const range60_79 = confidences.filter(c => c >= 60 && c < 80).length;
   const gte80 = confidences.filter(c => c >= 80).length;
 
+  // Compute histogram
+  const histogram = {
+    "20-29": confidences.filter(c => c >= 20 && c < 30).length,
+    "30-39": confidences.filter(c => c >= 30 && c < 40).length,
+    "40-49": confidences.filter(c => c >= 40 && c < 50).length,
+    "50-59": confidences.filter(c => c >= 50 && c < 60).length,
+    "60-69": confidences.filter(c => c >= 60 && c < 70).length,
+    "70-79": confidences.filter(c => c >= 70 && c < 80).length,
+    "80-89": confidences.filter(c => c >= 80 && c < 90).length,
+    "90-95": confidences.filter(c => c >= 90 && c <= 95).length
+  };
+
   return {
     confidence_avg: Math.round(avg * 10) / 10, // Round to 1 decimal
     confidence_lt40: lt40,
     confidence_40_59: range40_59,
     confidence_60_79: range60_79,
-    confidence_gte80: gte80
+    confidence_gte80: gte80,
+    confidence_histogram: histogram
   };
 }
 
@@ -91,7 +108,8 @@ router.get('/metrics-lite', async (_req, res) => {
               confidence_lt40_v2: v2Metrics.confidence_lt40,
               confidence_40_59_v2: v2Metrics.confidence_40_59,
               confidence_60_79_v2: v2Metrics.confidence_60_79,
-              confidence_gte80_v2: v2Metrics.confidence_gte80
+              confidence_gte80_v2: v2Metrics.confidence_gte80,
+              confidence_histogram_v2: v2Metrics.confidence_histogram
             };
           }
         }

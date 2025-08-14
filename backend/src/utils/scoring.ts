@@ -123,11 +123,11 @@ export function scoreNews(item: {
   // Cap & floor
   impact_score = Math.max(0, Math.min(100, impact_score));
   
-  // Compute confidence using v1 or v2 based on feature flag
+  // Compute confidence using v1 or v2.1 based on feature flag
   let finalConfidence: number;
   
   if (process.env.CONFIDENCE_V2 === 'true') {
-    // Use confidence v2 with five pillars
+    // Use confidence v2.1 with five pillars
     try {
       // Extract domain from source name (fallback to source name if no domain)
       const sourceDomains = sources.map(source => {
@@ -147,26 +147,35 @@ export function scoreNews(item: {
         market: undefined // No market data available in current implementation
       };
       
-      const v2Score = scoreConfidenceV2(v2Inputs);
-      finalConfidence = v2Score; // Don't clamp here
+      const v2Result = scoreConfidenceV2(v2Inputs);
+      
+      // Use contrast mode based on feature flag
+      if (process.env.CONFIDENCE_V2_CONTRAST === '0') {
+        // Non-contrast mode: use raw score directly
+        finalConfidence = v2Result.raw;
+      } else {
+        // Default contrast mode: use final score
+        finalConfidence = v2Result.final;
+      }
       
       // Log comparison if enabled
       if (process.env.CONFIDENCE_V2_COMPARE === '1') {
         console.log(JSON.stringify({
           type: 'confidence_compare',
           headline: item.headline?.substring(0, 50),
-          v1: Math.round(confidence), // Don't clamp here
-          v2: Math.round(v2Score), // Don't clamp here
+          v1: Math.round(confidence),
+          v2_raw: v2Result.raw,
+          v2_final: v2Result.final,
           sources: sources
         }));
       }
     } catch (error) {
-      console.error('Error computing confidence v2, falling back to v1:', error);
-      finalConfidence = confidence; // Don't clamp here
+      console.error('Error computing confidence v2.1, falling back to v1:', error);
+      finalConfidence = confidence;
     }
   } else {
     // Use original v1 confidence
-    finalConfidence = confidence; // Don't clamp here
+    finalConfidence = confidence;
   }
 
   // Label
