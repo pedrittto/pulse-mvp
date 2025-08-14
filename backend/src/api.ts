@@ -5,6 +5,7 @@ import { getNewsItems } from './storage';
 import { getDb } from './lib/firestore';
 import { ingestRSSFeeds } from './ingest/rss';
 import { metrics } from './routes/metrics';
+import { scoreNews } from './utils/scoring';
 
 // Type for watchlist data structure
 type WatchlistData = { 
@@ -358,8 +359,8 @@ router.post('/admin/purge-feed', async (_req, res) => {
 // GET /feed
 router.get('/feed', async (req, res) => {
   try {
-    // Accept query params: filter, q, limit, after
-    const { filter, limit } = req.query;
+    // Accept query params: filter, q, limit, after, debug
+    const { filter, limit, debug } = req.query;
     
     // Validate query params (basic validation for now)
     if (filter && !['my', 'market-moving', 'macro', 'all'].includes(filter as string)) {
@@ -374,9 +375,33 @@ router.get('/feed', async (req, res) => {
       });
     }
     
+    // Check for debug flag
+    const debugConfidence = debug === 'conf';
+    
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
     let items = await getNewsItems(newsLimit);
+    
+    // Apply confidence debug if requested
+    if (debugConfidence) {
+      items = items.map(item => {
+        // Re-score with debug information
+        const scoredItem = scoreNews({
+          headline: item.headline,
+          description: item.why,
+          sources: item.sources,
+          tickers: item.tickers,
+          published_at: item.published_at,
+          debug: true
+        });
+        
+        return {
+          ...item,
+          confidence: scoredItem.confidence,
+          confidenceDebug: scoredItem._confidence_debug
+        };
+      });
+    }
     
     // Apply "My" filter if requested
     if (filter === 'my') {

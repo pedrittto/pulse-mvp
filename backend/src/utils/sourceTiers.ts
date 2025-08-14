@@ -15,9 +15,11 @@
 export const REGULATORS = [
   'sec.gov',
   'ecb.europa.eu',
+  'ecb.int',
   'federalreserve.gov',
   'esma.europa.eu',
   'boe.org.uk',
+  'boe.uk',
   'bankofcanada.ca',
   'rba.gov.au',
   'boj.or.jp',
@@ -32,19 +34,21 @@ export const REGULATORS = [
   'irs.gov',
   'cftc.gov',
   'fdic.gov',
-  'federalregister.gov'
+  'federalregister.gov',
+  'bis.org'
 ];
 
-// Tier 1 media (high credibility)
+// Tier 1 media (high credibility) - 0.8
 export const TIER1_MEDIA = [
   'bloomberg.com',
+  'bloomberglaw.com',
   'reuters.com',
   'ft.com',
-  'wsj.com',
-  'apnews.com',
-  'cnbc.com',
-  'marketwatch.com',
   'financialtimes.com',
+  'wsj.com',
+  'cnbc.com',
+  'apnews.com',
+  'marketwatch.com',
   'economist.com',
   'nytimes.com',
   'washingtonpost.com',
@@ -52,7 +56,7 @@ export const TIER1_MEDIA = [
   'bbc.co.uk'
 ];
 
-// Tier 2 media (medium credibility)
+// Tier 2 media (medium credibility) - 0.6
 export const TIER2_MEDIA = [
   'techcrunch.com',
   'theverge.com',
@@ -61,6 +65,7 @@ export const TIER2_MEDIA = [
   'forbes.com',
   'fortune.com',
   'businessinsider.com',
+  'seekingalpha.com',
   'cnn.com',
   'usatoday.com',
   'latimes.com',
@@ -93,6 +98,34 @@ export const SOCIAL_VERIFIED = [
   'facebook.com',
   'instagram.com'
 ];
+
+/**
+ * Extract registered domain from URL
+ * @param url - Full URL
+ * @returns Registered domain (e.g., 'bloomberg.com' from 'https://www.bloomberg.com/news/...')
+ */
+export function getRegisteredDomain(url: string): string {
+  try {
+    // Simple regex to extract domain
+    const domainMatch = url.match(/https?:\/\/(?:www\.)?([^\/]+)/i);
+    if (domainMatch) {
+      return domainMatch[1].toLowerCase();
+    }
+  } catch (error) {
+    // Fallback to simple parsing
+  }
+  
+  // Fallback: try to extract domain from the URL
+  const urlParts = url.toLowerCase().split('/');
+  if (urlParts.length >= 3) {
+    const domainPart = urlParts[2];
+    if (domainPart.includes('.')) {
+      return domainPart;
+    }
+  }
+  
+  return url.toLowerCase();
+}
 
 /**
  * Get source tier based on domain and URL

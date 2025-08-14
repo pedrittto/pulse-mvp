@@ -68,12 +68,14 @@ export type ConfidenceDebug = {
   P5: number;
   S: number;
   C: number;
-  tiers: number[];
+  final: number;
+  tier: number;
+  domain: string;
   k: number;
-  freshness: number;
-  penalties: number;
-  tagsTaken: string[];
+  freshnessMin: number;
+  rumorPenaltyApplied: number;
   independenceBonus: number;
+  tagsTaken: string[];
 };
 
 // Main scoring function
@@ -114,12 +116,14 @@ export function scoreConfidenceV2(inputs: PillarInputs): { raw: number; final: n
     P5: pillar5,
     S,
     C,
-    tiers: inputs.sources.map(s => getSourceTier(s.domain)),
+    final,
+    tier: Math.max(...inputs.sources.map(s => getSourceTier(s.domain)), 0),
+    domain: inputs.sources[0]?.domain || 'unknown',
     k: new Set(inputs.sources.map(s => s.domain)).size,
-    freshness: computeFreshness(inputs.publishedAt, inputs.now),
-    penalties: computeAntiRumorPenalty(inputs.headline, inputs.body),
-    tagsTaken: inputs.tags || [],
-    independenceBonus: computeIndependenceBonus(inputs.sources)
+    freshnessMin: Math.round(computeFreshness(inputs.publishedAt, inputs.now) * 100) / 100,
+    rumorPenaltyApplied: computeAntiRumorPenalty(inputs.headline, inputs.body),
+    independenceBonus: computeIndependenceBonus(inputs.sources),
+    tagsTaken: inputs.tags || []
   };
   
   return { raw, final, debug };
@@ -141,7 +145,20 @@ function computePillar1(inputs: PillarInputs): number {
   const F = computeFreshness(inputs.publishedAt, inputs.now);
   
   // Calculate anti-rumor penalty
-  const R = computeAntiRumorPenalty(inputs.headline, inputs.body);
+  let R = computeAntiRumorPenalty(inputs.headline, inputs.body);
+  
+  // For high-tier sources (T >= 0.8), reduce opinion penalties
+  // This allows Tier-1 sources to publish analysis without heavy penalties
+  if (T >= 0.8 && R > 0) {
+    const headlineLower = inputs.headline.toLowerCase();
+    const isOpinionAnalysis = /^(opinion|op-ed|analysis):/i.test(headlineLower) || 
+                             /^(opinion|op-ed|analysis)\s+/i.test(headlineLower);
+    
+    if (isOpinionAnalysis) {
+      // Reduce penalty for high-tier sources with opinion/analysis content
+      R = R * 0.5; // Half penalty for Tier-1 sources
+    }
+  }
   
   // Formula: P1 = max(0, 0.7*T + 0.3*F − R)
   return Math.max(0, 0.7 * T + 0.3 * F - R);
@@ -215,12 +232,11 @@ function computePillar4(inputs: PillarInputs): number {
   const sourceTiers = inputs.sources.map(s => getSourceTier(s.domain));
   const maxTier = Math.max(...sourceTiers, 0);
   
-  // Map tiers to accountability scores
+  // Map tiers to accountability scores with better defaults
   if (maxTier >= 1.0) return 1.0; // regulator
-  if (maxTier >= 0.8) return 0.8; // corporate PR/IR
-  if (maxTier >= 0.6) return 0.8; // Tier-1 media
-  if (maxTier >= 0.4) return 0.5; // Tier-2 media
-  if (maxTier >= 0.2) return 0.5; // signed blog/social
+  if (maxTier >= 0.8) return 0.8; // Tier-1 media
+  if (maxTier >= 0.6) return 0.5; // Tier-2 media
+  if (maxTier >= 0.3) return 0.5; // signed blog/social
   return 0.0; // anonymous/throwaway social
 }
 
@@ -262,9 +278,40 @@ function computeFreshness(publishedAt: Date, now: Date): number {
 }
 
 function computeAntiRumorPenalty(headline: string, body: string): number {
+  const headlineLower = headline.toLowerCase();
   const text = `${headline} ${body}`.toLowerCase();
-  const rumorPattern = /(rumor|opinion|analysis|hearsay|denies|could|might)/i;
-  return rumorPattern.test(text) ? ANTI_RUMOR_PENALTY : 0.0;
+  
+  // Stricter rumor detection - only apply to headline
+  const rumorPatterns = [
+    /\b(rumou?r|hearsay|unconfirmed|speculation|leak)\b/i
+  ];
+  
+  // Check for explicit opinion/analysis labels in headline
+  const opinionPatterns = [
+    /^(opinion|op-ed|analysis):/i,
+    /^(opinion|op-ed|analysis)\s+/i
+  ];
+  
+  // Check for rumor patterns in headline
+  const hasRumorPattern = rumorPatterns.some(pattern => pattern.test(headlineLower));
+  
+  // Check for opinion patterns in headline
+  const hasOpinionPattern = opinionPatterns.some(pattern => pattern.test(headlineLower));
+  
+  // Apply penalty only if:
+  // 1. Headline contains explicit rumor words, OR
+  // 2. Headline starts with opinion/analysis labels (and we'll check source tier later)
+  if (hasRumorPattern) {
+    return ANTI_RUMOR_PENALTY;
+  }
+  
+  // For opinion/analysis, we need to check source tier
+  if (hasOpinionPattern) {
+    // This will be handled in P1 calculation where we have access to source tier
+    return ANTI_RUMOR_PENALTY;
+  }
+  
+  return 0.0;
 }
 
 function computeIndependenceBonus(sources: Array<{ domain: string; isPrimary: boolean }>): number {

@@ -4,7 +4,8 @@ export type Score = {
   impact_score: number; 
   impact: 'L'|'M'|'H'; 
   confidence: number; 
-  tags?: string[] 
+  tags?: string[];
+  _confidence_debug?: any; // Debug information when requested
 };
 
 export function scoreNews(item: {
@@ -13,6 +14,7 @@ export function scoreNews(item: {
   sources?: string[]; 
   tickers?: string[]; 
   published_at?: string;
+  debug?: boolean; // Add debug flag
 }): Score {
   // Start with base values
   let impact_score = 20;
@@ -125,12 +127,34 @@ export function scoreNews(item: {
   
   // Compute confidence using v1 or v2.1 based on feature flag
   let finalConfidence: number;
+  let debugInfo: any; // Declare debugInfo here
   
   if (process.env.CONFIDENCE_V2 === 'true') {
     // Use confidence v2.1 with five pillars
     try {
       // Extract domain from source name (fallback to source name if no domain)
       const sourceDomains = sources.map(source => {
+        // Map common source names to domains
+        const sourceMappings: { [key: string]: string } = {
+          'Bloomberg Markets': 'bloomberg.com',
+          'Bloomberg': 'bloomberg.com',
+          'Financial Times': 'ft.com',
+          'FT': 'ft.com',
+          'Reuters': 'reuters.com',
+          'CNBC': 'cnbc.com',
+          'MarketWatch': 'marketwatch.com',
+          'TechCrunch': 'techcrunch.com',
+          'The Verge': 'theverge.com',
+          'Ars Technica': 'arstechnica.com',
+          'BBC Business': 'bbc.com',
+          'AP Business': 'apnews.com'
+        };
+        
+        // Check if source name has a mapping
+        if (sourceMappings[source]) {
+          return { domain: sourceMappings[source], isPrimary: false };
+        }
+        
         // Simple domain extraction - in real implementation, this would be more robust
         const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
         return { domain, isPrimary: false };
@@ -158,6 +182,9 @@ export function scoreNews(item: {
         finalConfidence = v2Result.final;
       }
       
+      // Include debug information if requested
+      debugInfo = item.debug ? v2Result.debug : undefined;
+      
       // Log comparison if enabled
       if (process.env.CONFIDENCE_V2_COMPARE === '1') {
         console.log(JSON.stringify({
@@ -172,10 +199,12 @@ export function scoreNews(item: {
     } catch (error) {
       console.error('Error computing confidence v2.1, falling back to v1:', error);
       finalConfidence = confidence;
+      debugInfo = undefined; // Ensure debugInfo is undefined on error
     }
   } else {
     // Use original v1 confidence
     finalConfidence = confidence;
+    debugInfo = undefined; // Ensure debugInfo is undefined for v1
   }
 
   // Label
@@ -188,6 +217,7 @@ export function scoreNews(item: {
     impact_score: Math.round(impact_score),
     impact,
     confidence: Math.round(clampedConfidence),
-    tags: tags.length > 0 ? tags : undefined
+    tags: tags.length > 0 ? tags : undefined,
+    ...(debugInfo && { _confidence_debug: debugInfo })
   };
 }

@@ -242,10 +242,32 @@ export function composeHeadline(raw: RawContent): string {
     headline = cleanForHeadline(title);
   }
   
-  // Ensure headline is concise (max 12 words)
+  // GUARDRAILS: Prevent malformed headlines
+  const headlineLower = headline.toLowerCase();
   const words = headline.split(' ').filter(word => word.length > 0);
-  if (words.length > 12) {
-    headline = words.slice(0, 12).join(' ');
+  
+  // Guardrail 1: If token count < 4 OR headline lacks alphabetic words, fallback to original
+  const hasAlphabeticWord = /[a-zA-Z]/.test(headline);
+  if (words.length < 4 || !hasAlphabeticWord) {
+    headline = cleanForHeadline(title);
+  }
+  
+  // Guardrail 2: Prevent "Country/Entity Number%" patterns
+  const countryNumberPattern = /^[A-Z][a-z]+\s+\d+%?$/;
+  if (countryNumberPattern.test(headline)) {
+    headline = cleanForHeadline(title);
+  }
+  
+  // Guardrail 3: Prevent headlines starting with numbers only
+  const startsWithNumberOnly = /^\d+%?\s*$/.test(headline.trim());
+  if (startsWithNumberOnly) {
+    headline = cleanForHeadline(title);
+  }
+  
+  // Ensure headline is concise (max 12 words)
+  const finalWords = headline.split(' ').filter(word => word.length > 0);
+  if (finalWords.length > 12) {
+    headline = finalWords.slice(0, 12).join(' ');
   }
   
   // Capitalize properly
