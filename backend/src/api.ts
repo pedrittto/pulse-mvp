@@ -398,7 +398,7 @@ router.get('/feed', async (req, res) => {
         return {
           ...item,
           confidence: scoredItem.confidence,
-          confidenceDebug: scoredItem._confidence_debug
+          debug: scoredItem._confidence_debug
         };
       });
     }
