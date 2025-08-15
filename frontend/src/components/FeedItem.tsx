@@ -2,21 +2,18 @@ import { NewsItem } from '@/types'
 import ImpactBadge from './ImpactBadge'
 import ConfidenceBadge from './ConfidenceBadge'
 import HelpIcon from './HelpIcon'
+import { pickArrival, formatHHMMLocal, freshnessLabel } from '@/lib/time'
+import { cn } from '@/lib/utils'
 
 interface FeedItemProps {
   item: NewsItem
 }
 
 export default function FeedItem({ item }: FeedItemProps) {
-  // Format time as HH:MM
-  const formatTime = (isoString: string) => {
-    const date = new Date(isoString)
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
-      minute: '2-digit',
-      hour12: false 
-    })
-  }
+  // Get arrival time and format it
+  const arrivalISO = pickArrival(item);
+  const timeText = formatHHMMLocal(arrivalISO);
+  const fr = freshnessLabel(item.published_at);
 
   // Get first source domain
   const getFirstSourceDomain = (sources: string[]) => {
@@ -33,9 +30,18 @@ export default function FeedItem({ item }: FeedItemProps) {
     <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center flex-wrap gap-2 min-w-0">
-          <span className="text-sm text-gray-500 font-mono flex-shrink-0">
-            [{formatTime(item.published_at)}]
-          </span>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{timeText}</span>
+            <span title={fr.tooltip} className={cn(
+              "px-2 py-0.5 rounded-md border",
+              fr.level === 'flash' && "border-blue-200 bg-blue-50",
+              fr.level === 'new' && "border-neutral-200 bg-neutral-50",
+              fr.level === 'old' && "border-amber-200 bg-amber-50",
+              fr.level === 'veryold' && "border-gray-200 bg-gray-50"
+            )}>
+              {fr.label}
+            </span>
+          </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <ConfidenceBadge confidence={item.confidence} />
             <ImpactBadge impact={item.impact} />

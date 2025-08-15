@@ -82,7 +82,8 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         impact: sanitizedItem.impact || 'L',
         impact_score: typeof sanitizedItem.impact_score === 'number' ? sanitizedItem.impact_score : 20,
         confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50,
-        category: sanitizedItem.category || ''
+        category: sanitizedItem.category || '',
+        ingested_at: sanitizedItem.ingested_at ?? new Date().toISOString()
       };
 
       // Add new document
@@ -170,7 +171,13 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
         });
       }
       
-      items.push(cleanedItem);
+      // Add arrival_at field as alias of ingested_at
+      const itemWithArrival = {
+        ...cleanedItem,
+        arrival_at: cleanedItem.ingested_at
+      };
+      
+      items.push(itemWithArrival);
     });
     
     return items;

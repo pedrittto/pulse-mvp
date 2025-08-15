@@ -13,6 +13,9 @@ import { startRSSIngestion } from './cron';
 const app = express();
 const port = Number(process.env.PORT) || 4000;
 
+// Export app for testing
+export { app };
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
@@ -91,10 +94,12 @@ app.use('*', (_req, res) => {
   });
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`listening on ${port}`);
-  
-  // Start RSS ingestion cron job
-  startRSSIngestion();
-});
+// Start server only if this is the main module (not when imported for testing)
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`listening on ${port}`);
+    
+    // Start RSS ingestion cron job
+    startRSSIngestion();
+  });
+}

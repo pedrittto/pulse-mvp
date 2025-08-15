@@ -10,6 +10,7 @@ export interface NewsItem {
   tickers: string[];
   published_at: string; // ISO string
   ingested_at: string; // ISO string
+  arrival_at?: string; // ISO string - alias of ingested_at
   impact: Impact;
   confidence: number; // 0-100
   primary_entity?: string;
