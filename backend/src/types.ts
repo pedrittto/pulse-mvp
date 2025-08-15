@@ -1,4 +1,4 @@
-export type Impact = "L" | "M" | "H";
+export type Impact = "L" | "M" | "H" | "C";
 
 export interface NewsItem {
   id: string;

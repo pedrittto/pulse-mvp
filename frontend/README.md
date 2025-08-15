@@ -1,93 +1,53 @@
-# Pulse Frontend - Stage A
+# Pulse Frontend
 
-A minimal Next.js application that displays a real-time financial news feed.
+A Next.js application for displaying real-time news feeds with auto-refresh functionality.
 
 ## Features
 
-- Server-side rendering with 60-second revalidation
-- Clean, responsive UI with Tailwind CSS
-- Loading, error, and empty states
-- Real-time refresh functionality
-- Displays news items with confidence scores, impact levels, and ticker symbols
+- **Auto-refresh**: News feed automatically updates every 60 seconds (configurable)
+- **Background updates**: No page reloads or UI flicker during refresh
+- **Real-time data**: Uses SWR for efficient data fetching and caching
+- **Responsive design**: Works on desktop and mobile devices
 
-## Setup
+## Environment Variables
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+### `NEXT_PUBLIC_FEED_REFRESH_MS` (optional)
+- **Default**: `60000` (60 seconds)
+- **Description**: Controls how often the news feed automatically refreshes in milliseconds
+- **Example**: `30000` for 30-second refresh intervals
 
-2. Create environment file:
-   ```bash
-   cp env.example .env.local
-   ```
+### `NEXT_PUBLIC_API_BASE_URL` (optional)
+- **Default**: `/api` (uses Next.js API proxy)
+- **Description**: Base URL for the backend API
+- **Example**: `http://localhost:4000` for direct backend connection
 
-3. Update `.env.local` with your API URL (defaults to `http://localhost:4000`):
-   ```
-   NEXT_PUBLIC_API_BASE_URL=http://localhost:4000
-   NEXT_PUBLIC_USE_MOCKS=false
-   ```
+## Development
 
-4. Start the development server:
-   ```bash
-   npm run dev
-   ```
-
-5. Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-## Manual Test
-
-1. Ensure your backend is running on `http://localhost:4000`
-2. Open `http://localhost:3000`
-3. Verify that news items render with:
-   - Time format [HH:MM]
-   - Confidence percentage
-   - Impact level (Low/Medium/High)
-   - Headlines and descriptions
-   - Source domains
-   - Ticker symbols
-4. Test the Refresh button in the top bar
-5. Test error state by stopping the backend
-6. Test empty state when no items are available
-
-## Project Structure
-
-```
-src/
-├── app/
-│   ├── globals.css      # Tailwind CSS imports
-│   ├── layout.tsx       # Root layout
-│   └── page.tsx         # Main feed page (server component)
-├── components/
-│   ├── FeedItem.tsx     # Individual news item component
-│   └── Topbar.tsx       # Header with refresh button
-├── lib/
-│   └── config.ts        # API configuration
-└── types/
-    └── index.ts         # TypeScript type definitions
+```bash
+npm install
+npm run dev
 ```
 
-## API Integration
+## Build
 
-The app fetches data from `${NEXT_PUBLIC_API_BASE_URL}/feed?limit=20` and expects a response in this format:
-
-```json
-{
-  "items": [
-    {
-      "id": "string",
-      "thread_id": "string",
-      "headline": "string",
-      "why": "string",
-      "sources": ["string"],
-      "tickers": ["string"],
-      "published_at": "ISO string",
-      "ingested_at": "ISO string",
-      "impact": "L" | "M" | "H",
-      "confidence": 0-100,
-      "primary_entity": "string"
-    }
-  ],
-  "total": 0
-}
+```bash
+npm run build
+npm start
 ```
+
+## Auto-refresh Implementation
+
+The feed uses SWR's `refreshInterval` feature to automatically fetch new data in the background:
+
+- **No page reloads**: Updates happen seamlessly in the background
+- **No UI flicker**: Uses `keepPreviousData` to maintain smooth transitions
+- **Scroll position preserved**: User's scroll position is maintained during updates
+- **Visual feedback**: Refresh button shows loading state during updates
+- **Configurable timing**: Refresh interval can be adjusted via environment variable
+
+## Architecture
+
+- **`useFeed` hook**: Centralized data fetching with auto-refresh logic
+- **SWR integration**: Leverages SWR for caching, revalidation, and background updates
+- **Error handling**: Graceful error states with retry functionality
+- **Performance optimized**: Efficient re-rendering and minimal network requests

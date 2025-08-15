@@ -343,6 +343,267 @@ router.post('/admin/purge-feed', async (_req, res) => {
   }
 });
 
+// Debug endpoint for Impact explanation
+router.get('/admin/impact-explain', async (req, res) => {
+  // Environment guard - only allow in non-production
+  if (process.env.NODE_ENV === 'production') {
+    return res.status(404).json({
+      ok: false,
+      error: 'Debug endpoint not available in production',
+      code: 'DEBUG_DISABLED'
+    });
+  }
+
+  try {
+    const { id } = req.query;
+    
+    if (!id || typeof id !== 'string') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Missing or invalid id parameter',
+        code: 'INVALID_ID'
+      });
+    }
+
+    // Fetch item from Firestore
+    const newsCollection = getDb().collection('news');
+    const docSnap = await newsCollection.doc(id).get();
+    
+    if (!docSnap.exists) {
+      return res.status(404).json({
+        ok: false,
+        error: 'News item not found',
+        code: 'ITEM_NOT_FOUND'
+      });
+    }
+
+    const item = docSnap.data() as any;
+    
+    // Check if Impact V3 is enabled
+    const impactMode = process.env.IMPACT_MODE;
+    
+    if (impactMode === 'v3') {
+      // Use Impact V3
+      const score = scoreNews({
+        headline: item.headline,
+        description: item.why,
+        sources: item.sources,
+        tickers: item.tickers,
+        published_at: item.published_at,
+        debug: true
+      });
+
+      res.json({
+        ok: true,
+        id: id,
+        features: {
+          headline: item.headline,
+          description: item.why,
+          tickers: item.tickers,
+          published_at: item.published_at,
+          sources: item.sources
+        },
+        raw: score.impact_score,
+        category: score.impact,
+        drivers: score._impact_debug?.drivers || [],
+        meta: score._impact_debug?.meta || {},
+        flags: {
+          has_macro_tag: score.tags?.includes('Macro') || false,
+          version: 'v3'
+        }
+      });
+    } else {
+      // Use legacy V2
+      const score = scoreNews({
+        headline: item.headline,
+        description: item.why,
+        sources: item.sources,
+        tickers: item.tickers,
+        published_at: item.published_at,
+        debug: true
+      });
+
+      // Calculate detailed breakdown
+      const breakdown = calculateImpactBreakdown({
+        headline: item.headline,
+        description: item.why,
+        sources: item.sources,
+        tickers: item.tickers,
+        published_at: item.published_at
+      });
+
+      res.json({
+        ok: true,
+        id: id,
+        features: {
+          headline: item.headline,
+          description: item.why,
+          tickers: item.tickers,
+          published_at: item.published_at,
+          sources: item.sources
+        },
+        intermediates: breakdown.intermediates,
+        raw: score.impact_score,
+        category: score.impact,
+        drivers: breakdown.drivers,
+        flags: {
+          has_macro_tag: score.tags?.includes('Macro') || false,
+          has_opinion_keywords: breakdown.flags.has_opinion_keywords
+        },
+        version: 'v2.0'
+      });
+    }
+    return;
+  } catch (error) {
+    console.error('Impact explain endpoint error:', error);
+    res.status(500).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+      code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
+    });
+    return;
+  }
+});
+
+// Helper function to calculate detailed Impact breakdown
+function calculateImpactBreakdown(item: {
+  headline?: string;
+  description?: string;
+  sources?: string[];
+  tickers?: string[];
+  published_at?: string;
+}) {
+  const headline = (item.headline || '').toLowerCase();
+  const description = (item.description || '').toLowerCase();
+  const text = `${headline} ${description}`;
+  const sources = item.sources || [];
+  const tickers = item.tickers || [];
+  const published_at = item.published_at;
+
+  let base_score = 20;
+  let recency_boost = 0;
+  let ticker_boost = 0;
+  let keyword_boost = 0;
+  let source_boost = 0;
+  const drivers: Array<{feature: string, contribution: number}> = [];
+  const flags = { has_opinion_keywords: false };
+
+  // Recency boost
+  if (published_at) {
+    const published = new Date(published_at);
+    const now = new Date();
+    const hoursDiff = (now.getTime() - published.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursDiff < 1) {
+      recency_boost = 15;
+      drivers.push({feature: 'recency_under_1h', contribution: 15});
+    } else if (hoursDiff < 6) {
+      recency_boost = 10;
+      drivers.push({feature: 'recency_under_6h', contribution: 10});
+    } else if (hoursDiff < 24) {
+      recency_boost = 5;
+      drivers.push({feature: 'recency_under_24h', contribution: 5});
+    }
+  }
+
+  // Ticker signal
+  if (tickers.length === 1) {
+    ticker_boost = 10;
+    drivers.push({feature: 'single_ticker', contribution: 10});
+  } else if (tickers.length >= 2) {
+    ticker_boost = 15;
+    drivers.push({feature: 'multiple_tickers', contribution: 15});
+  }
+
+  // HIGH_IMPACT keywords
+  const HIGH_IMPACT = [
+    'acquisition', 'merger', 'lawsuit', 'guidance', 'earnings', 'downgrade', 
+    'upgrade', 'layoffs', 'ceo resigns', 'investigation', 'ban', 'tariff', 
+    'sanction', 'data breach', 'hack', 'halt', 'bankrupt', 'chapter 11'
+  ];
+  
+  for (const keyword of HIGH_IMPACT) {
+    if (text.includes(keyword)) {
+      keyword_boost += 15;
+      drivers.push({feature: `high_impact_keyword_${keyword}`, contribution: 15});
+      break;
+    }
+  }
+
+  // MEDIUM_IMPACT keywords
+  const MEDIUM_IMPACT = [
+    'partnership', 'license', 'contract', 'redirect', 'price cut', 
+    'price increase', 'expansion', 'plant', 'facility', 'chip', 'ai model'
+  ];
+  
+  for (const keyword of MEDIUM_IMPACT) {
+    if (text.includes(keyword)) {
+      keyword_boost += 8;
+      drivers.push({feature: `medium_impact_keyword_${keyword}`, contribution: 8});
+      break;
+    }
+  }
+
+  // MACRO_KEYWORDS
+  const MACRO_KEYWORDS = [
+    'fed', 'interest rate', 'cpi', 'ppi', 'jobs report', 'opec', 
+    'oil cut', 'war', 'geopolitics', 'tariff', 'sanctions', 
+    'treasury', 'ecb'
+  ];
+  
+  for (const keyword of MACRO_KEYWORDS) {
+    if (text.includes(keyword)) {
+      keyword_boost += 12;
+      drivers.push({feature: `macro_keyword_${keyword}`, contribution: 12});
+      break;
+    }
+  }
+
+  // Source weight
+  const SOURCE_W: { [key: string]: number } = { 
+    'bloomberg': 6, 'reuters': 6, 'wsj': 5, 'ft': 5, 'cnbc': 3, 
+    'marketwatch': 3, 'techcrunch': 2 
+  };
+  
+  if (sources.length > 0) {
+    const firstSource = sources[0].toLowerCase();
+    for (const [source, weight] of Object.entries(SOURCE_W)) {
+      if (firstSource.includes(source)) {
+        source_boost = weight;
+        drivers.push({feature: `source_${source}`, contribution: weight});
+        break;
+      }
+    }
+  }
+
+  // Opinion keywords (for flags only)
+  const OPINION_KEYWORDS = [
+    'opinion', 'op-ed', 'column', 'rumor', 'reportedly', 'sources say'
+  ];
+  
+  for (const keyword of OPINION_KEYWORDS) {
+    if (headline.includes(keyword)) {
+      flags.has_opinion_keywords = true;
+      break;
+    }
+  }
+
+  const total_score = Math.max(0, Math.min(100, base_score + recency_boost + ticker_boost + keyword_boost + source_boost));
+
+  return {
+    intermediates: {
+      base_score,
+      recency_boost,
+      ticker_boost,
+      keyword_boost,
+      source_boost,
+      total_score
+    },
+    drivers,
+    flags
+  };
+}
+
 // Demo watchlist (commented out as unused)
 // const demoWatchlist: Watchlist = {
 //   user_id: "demo",
@@ -375,15 +636,16 @@ router.get('/feed', async (req, res) => {
       });
     }
     
-    // Check for debug flag
+    // Check for debug flags
     const debugConfidence = debug === 'conf';
+    const debugImpact = debug === 'impact';
     
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
     let items = await getNewsItems(newsLimit);
     
-    // Apply confidence debug if requested
-    if (debugConfidence) {
+    // Apply debug if requested
+    if (debugConfidence || debugImpact) {
       items = items.map(item => {
         // Re-score with debug information
         const scoredItem = scoreNews({
@@ -395,11 +657,20 @@ router.get('/feed', async (req, res) => {
           debug: true
         });
         
-        return {
+        const result: any = {
           ...item,
-          confidence: scoredItem.confidence,
-          debug: scoredItem._confidence_debug
+          confidence: scoredItem.confidence
         };
+        
+        if (debugConfidence) {
+          result.debug = scoredItem._confidence_debug;
+        }
+        
+        if (debugImpact) {
+          result.impact_debug = scoredItem._impact_debug;
+        }
+        
+        return result;
       });
     }
     

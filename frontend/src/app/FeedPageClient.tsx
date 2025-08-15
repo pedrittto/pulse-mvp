@@ -2,12 +2,11 @@
 
 import { useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import useSWR, { mutate } from 'swr'
 import Topbar from '@/components/Topbar'
 import FeedItem from '@/components/FeedItem'
-import { NewsItem, FeedResponse, FilterType, Watchlist } from '@/types'
-import { fetcher } from '@/lib/fetcher'
+import { NewsItem, FilterType } from '@/types'
 import { API_BASE, isUsingProxy } from '@/lib/config'
+import { useFeed } from '@/lib/useFeed'
 
 interface FeedPageClientProps {
   apiBaseUrl: string
@@ -21,34 +20,13 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   const currentFilter = (searchParams.get('f') as FilterType) || 'all'
   const currentSearch = searchParams.get('q') || ''
 
-  // Build API URL with query parameters
-  const buildApiUrl = useCallback(() => {
-    const params = new URLSearchParams({ limit: '20' })
-    
-    if (currentFilter && currentFilter !== 'all') {
-      params.set('filter', currentFilter)
-    }
-    
-    if (currentSearch) {
-      params.set('q', currentSearch)
-    }
-    
-    return `${apiBaseUrl}/feed?${params.toString()}`
-  }, [apiBaseUrl, currentFilter, currentSearch])
-
-  // SWR hook for data fetching
-  const { data: feedData, error, isLoading } = useSWR<FeedResponse>(
-    buildApiUrl(),
-    fetcher,
-    {
-      onSuccess: (data) => {
-        console.info('FEED_LOADED', data.items?.length || 0, data.items?.[0])
-      },
-      onError: (err) => {
-        console.error('Failed to fetch feed data:', err)
-      }
-    }
-  )
+  // Use custom feed hook with auto-refresh
+  const { data: feedData, error, isLoading, isValidating, refresh } = useFeed({
+    apiBaseUrl,
+    filter: currentFilter,
+    search: currentSearch,
+    limit: 20
+  })
 
   // Handle filter change
   const handleFilterChange = useCallback((filter: FilterType, search?: string) => {
@@ -73,14 +51,14 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   const handleWatchlistUpdate = useCallback(() => {
     // Refresh the feed if we're on the "My" filter
     if (currentFilter === 'my') {
-      mutate(buildApiUrl())
+      refresh()
     }
-  }, [currentFilter, buildApiUrl])
+  }, [currentFilter, refresh])
 
   // Handle refresh
   const handleRefresh = useCallback(() => {
-    mutate(buildApiUrl())
-  }, [buildApiUrl])
+    refresh()
+  }, [refresh])
 
   // Proxy banner
   const ProxyBanner = () => {
@@ -106,6 +84,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
           onFilterChange={handleFilterChange}
           onWatchlistUpdate={handleWatchlistUpdate}
           onRefresh={handleRefresh}
+          isValidating={isValidating}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="text-center py-8">
@@ -118,7 +97,6 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
 
   // Error state
   if (error || !feedData) {
-    const requestUrl = buildApiUrl();
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     return (
@@ -128,6 +106,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
           onFilterChange={handleFilterChange}
           onWatchlistUpdate={handleWatchlistUpdate}
           onRefresh={handleRefresh}
+          isValidating={isValidating}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
@@ -149,9 +128,9 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
                   </code>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Request URL:</span>
+                  <span className="font-medium text-gray-700">API Base URL:</span>
                   <code className="ml-2 px-2 py-1 bg-gray-100 rounded text-red-600 break-all">
-                    {requestUrl}
+                    {apiBaseUrl}
                   </code>
                 </div>
                 <div>
@@ -189,6 +168,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
           onFilterChange={handleFilterChange}
           onWatchlistUpdate={handleWatchlistUpdate}
           onRefresh={handleRefresh}
+          isValidating={isValidating}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
@@ -236,6 +216,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
         onFilterChange={handleFilterChange}
         onWatchlistUpdate={handleWatchlistUpdate}
         onRefresh={handleRefresh}
+        isValidating={isValidating}
       />
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="space-y-4">

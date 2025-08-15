@@ -23,6 +23,11 @@ export default function ImpactBadge({ impact, className = '' }: ImpactBadgeProps
           label: 'High',
           classes: 'border-red-200 bg-red-50 text-red-700'
         };
+      case 'C':
+        return {
+          label: 'Critical',
+          classes: 'border-purple-200 bg-purple-50 text-purple-700'
+        };
       default:
         return {
           label: 'Unknown',
