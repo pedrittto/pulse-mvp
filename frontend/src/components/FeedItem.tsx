@@ -2,20 +2,32 @@ import { NewsItem } from '@/types'
 import ImpactBadge from './ImpactBadge'
 import ConfidenceBadge from './ConfidenceBadge'
 import HelpIcon from './HelpIcon'
-import { pickArrival, formatHHMMLocal } from '@/lib/time'
+import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
-import { memo, useMemo } from 'react'
+import { memo, useMemo, useState, useEffect } from 'react'
 
 interface FeedItemProps {
   item: NewsItem
 }
 
 function FeedItem({ item }: FeedItemProps) {
-  // Get arrival time and format it - memoized to prevent re-computation
+  // State to force re-renders for relative time updates
+  const [, setTick] = useState(0);
+  
+  // Update relative time every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick(Date.now());
+    }, 30000); // Update every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  // Get arrival time and format it as relative time - recalculates on every render
   const timeText = useMemo(() => {
     const arrivalISO = pickArrival(item);
-    return formatHHMMLocal(arrivalISO);
-  }, [item.arrival_at, item.ingested_at, item.published_at]);
+    return formatRelativeTime(arrivalISO);
+  }, [item.arrival_at, item.ingested_at, item.published_at]); // Depend on all time fields
   
   // Process headline and description
   const processedHeadline = sentenceCase(item.headline);

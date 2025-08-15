@@ -83,7 +83,9 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         impact_score: typeof sanitizedItem.impact_score === 'number' ? sanitizedItem.impact_score : 20,
         confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50,
         category: sanitizedItem.category || '',
-        ingested_at: sanitizedItem.ingested_at ?? new Date().toISOString()
+        ingested_at: sanitizedItem.ingested_at ?? new Date().toISOString(),
+        // Set arrival_at only on first insert - never overwrite existing
+        arrival_at: sanitizedItem.arrival_at ?? new Date().toISOString()
       };
 
       // Add new document
@@ -171,10 +173,11 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
         });
       }
       
-      // Add arrival_at field as alias of ingested_at
+      // Preserve arrival_at exactly as stored - never modify it
       const itemWithArrival = {
         ...cleanedItem,
-        arrival_at: cleanedItem.ingested_at
+        // Use existing arrival_at if present, otherwise use ingested_at as fallback
+        arrival_at: item.arrival_at ?? item.ingested_at
       };
       
       items.push(itemWithArrival);

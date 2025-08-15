@@ -639,6 +639,7 @@ router.get('/feed', async (req, res) => {
     // Check for debug flags
     const debugConfidence = debug === 'conf';
     const debugImpact = debug === 'impact';
+    const debugTime = debug === 'time';
     
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
@@ -672,6 +673,19 @@ router.get('/feed', async (req, res) => {
         
         return result;
       });
+    }
+    
+    // Apply timestamp debug if requested (dev only)
+    if (debugTime && process.env.NODE_ENV === 'development') {
+      items = items.map(item => ({
+        ...item,
+        _time_debug: {
+          id: item.id,
+          arrival_at: item.arrival_at,
+          ingested_at: item.ingested_at,
+          published_at: item.published_at
+        }
+      }));
     }
     
     // Apply "My" filter if requested
