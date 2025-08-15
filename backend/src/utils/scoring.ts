@@ -1,4 +1,4 @@
-import { scoreConfidenceV2, CONF_MIN, CONF_MAX, clamp } from './confidenceV2';
+import { scoreConfidenceV2, scoreConfidenceV22, CONF_MIN, CONF_MAX, clamp } from './confidenceV2';
 
 export type Score = { 
   impact_score: number; 
@@ -125,12 +125,14 @@ export function scoreNews(item: {
   // Cap & floor
   impact_score = Math.max(0, Math.min(100, impact_score));
   
-  // Compute confidence using v1 or v2.1 based on feature flag
+  // Compute confidence using v1, v2.1, or v2.2 based on feature flags
   let finalConfidence: number;
   let debugInfo: any; // Declare debugInfo here
   
-  if (process.env.CONFIDENCE_V2 === 'true') {
-    // Use confidence v2.1 with five pillars
+  // Check for V2.2 first, then V2.1, then fallback to V1
+  const confidenceMode = process.env.CONFIDENCE_MODE;
+  
+  if (confidenceMode === 'v2.2' || process.env.CONFIDENCE_V2 === 'true') {
     try {
       // Extract domain from source name (fallback to source name if no domain)
       const sourceDomains = sources.map(source => {
@@ -171,10 +173,17 @@ export function scoreNews(item: {
         market: undefined // No market data available in current implementation
       };
       
-      const v2Result = scoreConfidenceV2(v2Inputs);
+      let v2Result;
+      if (confidenceMode === 'v2.2') {
+        // Use V2.2 scoring
+        v2Result = scoreConfidenceV22(v2Inputs);
+      } else {
+        // Use V2.1 scoring
+        v2Result = scoreConfidenceV2(v2Inputs);
+      }
       
-      // Use contrast mode based on feature flag
-      if (process.env.CONFIDENCE_V2_CONTRAST === '0') {
+      // Use contrast mode based on feature flag (for V2.1 compatibility)
+      if (confidenceMode !== 'v2.2' && process.env.CONFIDENCE_V2_CONTRAST === '0') {
         // Non-contrast mode: use raw score directly
         finalConfidence = v2Result.raw;
       } else {
@@ -193,11 +202,12 @@ export function scoreNews(item: {
           v1: Math.round(confidence),
           v2_raw: v2Result.raw,
           v2_final: v2Result.final,
+          mode: confidenceMode || 'v2.1',
           sources: sources
         }));
       }
     } catch (error) {
-      console.error('Error computing confidence v2.1, falling back to v1:', error);
+      console.error(`Error computing confidence ${confidenceMode || 'v2.1'}, falling back to v1:`, error);
       finalConfidence = confidence;
       debugInfo = undefined; // Ensure debugInfo is undefined on error
     }

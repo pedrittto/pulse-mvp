@@ -81,6 +81,7 @@ router.get('/metrics-lite', async (_req, res) => {
     // Get confidence metrics from recent documents (sample last 500 for performance)
     let confidenceMetrics = null;
     let confidenceV2Metrics = null;
+    let confidenceV22Metrics = null;
     
     try {
       const recentDocs = await db.collection('news')
@@ -113,6 +114,25 @@ router.get('/metrics-lite', async (_req, res) => {
             };
           }
         }
+
+        // Check for v2.2 metrics if enabled
+        if (process.env.CONFIDENCE_MODE === 'v2.2') {
+          const v22Confidences = recentDocs.docs
+            .map(doc => doc.data().confidence)
+            .filter((c): c is number => typeof c === 'number' && !isNaN(c));
+
+          if (v22Confidences.length > 0) {
+            const v22Metrics = computeConfidenceMetrics(v22Confidences);
+            confidenceV22Metrics = {
+              confidence_avg_v22: v22Metrics.confidence_avg,
+              confidence_lt40_v22: v22Metrics.confidence_lt40,
+              confidence_40_59_v22: v22Metrics.confidence_40_59,
+              confidence_60_79_v22: v22Metrics.confidence_60_79,
+              confidence_gte80_v22: v22Metrics.confidence_gte80,
+              confidence_histogram_v22: v22Metrics.confidence_histogram
+            };
+          }
+        }
       }
     } catch (error) {
       console.error('[metrics] Failed to compute confidence metrics:', error);
@@ -126,7 +146,8 @@ router.get('/metrics-lite', async (_req, res) => {
       feed_count: feedCount,
       now: new Date().toISOString(),
       ...(confidenceMetrics && { confidence: confidenceMetrics }),
-      ...(confidenceV2Metrics && { confidence_v2: confidenceV2Metrics })
+      ...(confidenceV2Metrics && { confidence_v2: confidenceV2Metrics }),
+      ...(confidenceV22Metrics && { confidence_v22: confidenceV22Metrics })
     };
     
     res.json(response);
