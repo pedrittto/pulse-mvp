@@ -4,15 +4,18 @@ import ConfidenceBadge from './ConfidenceBadge'
 import HelpIcon from './HelpIcon'
 import { pickArrival, formatHHMMLocal } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
+import { memo, useMemo } from 'react'
 
 interface FeedItemProps {
   item: NewsItem
 }
 
-export default function FeedItem({ item }: FeedItemProps) {
-  // Get arrival time and format it
-  const arrivalISO = pickArrival(item);
-  const timeText = formatHHMMLocal(arrivalISO);
+function FeedItem({ item }: FeedItemProps) {
+  // Get arrival time and format it - memoized to prevent re-computation
+  const timeText = useMemo(() => {
+    const arrivalISO = pickArrival(item);
+    return formatHHMMLocal(arrivalISO);
+  }, [item.arrival_at, item.ingested_at, item.published_at]);
   
   // Process headline and description
   const processedHeadline = sentenceCase(item.headline);
@@ -77,3 +80,6 @@ export default function FeedItem({ item }: FeedItemProps) {
     </div>
   )
 }
+
+// Memoize the component to prevent unnecessary re-renders
+export default memo(FeedItem);

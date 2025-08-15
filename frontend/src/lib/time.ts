@@ -4,7 +4,13 @@ export function pickArrival(item: any): string {
 
 export function formatHHMMLocal(iso: string): string {
   const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  
+  // Manual formatting to avoid any potential rounding/bucketing in toLocaleTimeString
+  const hours = d.getHours();
+  const minutes = d.getMinutes();
+  
+  // Format as HH:MM with leading zeros
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
 }
 
 export function freshnessLabel(publishedISO: string): {label: string, level: 'flash'|'new'|'old'|'veryold', tooltip: string} {
