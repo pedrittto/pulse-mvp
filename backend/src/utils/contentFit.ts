@@ -1,5 +1,5 @@
 // Configuration constants
-export const CONTENT_TREND_BONUS = parseFloat(process.env.CONTENT_TREND_BONUS || '0.10');
+export const getContentTrendBonus = () => parseFloat(process.env.CONTENT_TREND_BONUS || '0.10');
 
 export type ContentClass = 'opinion' | 'info' | 'sectoral' | 'macro';
 
@@ -90,7 +90,7 @@ export function scoreContentFit(headline: string, body: string): ContentFitResul
   
   // Check for trend alignment
   const trendAligned = alignsWithActiveTrend(headline, body);
-  const trendBonus = trendAligned ? CONTENT_TREND_BONUS : 0.0;
+  const trendBonus = trendAligned ? getContentTrendBonus() : 0.0;
   
   // Apply trend bonus
   baseFit += trendBonus;

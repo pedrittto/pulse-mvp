@@ -7,6 +7,19 @@ import * as path from 'path';
 
 const parseXML = promisify(parseString);
 
+// Environment getter functions
+const getBreakingLogLevel = () => process.env.BREAKING_LOG_LEVEL || 'info';
+
+// Logging utilities
+const logLevels = { debug: 0, info: 1, warn: 2, error: 3 };
+const currentLogLevel = logLevels[getBreakingLogLevel() as keyof typeof logLevels] ?? 1;
+
+const log = (level: keyof typeof logLevels, message: string, ...args: any[]) => {
+  if (logLevels[level] >= currentLogLevel) {
+    console.log(`[breaking][${level}] ${message}`, ...args);
+  }
+};
+
 interface BreakingSource {
   name: string;
   url: string;
@@ -57,6 +70,16 @@ interface RSSFeed {
   };
 }
 
+// Backoff tracking per source
+interface BackoffState {
+  currentInterval: number;
+  baseInterval: number;
+  attempt: number;
+  maxAttempts: number;
+  lastError: string;
+  lastErrorTime: number;
+}
+
 class BreakingScheduler {
   private config: BreakingConfig;
   private eventWindows: EventWindowsConfig;
@@ -64,6 +87,9 @@ class BreakingScheduler {
   private etags: Map<string, string> = new Map();
   private lastModified: Map<string, string> = new Map();
   private isRunning = false;
+  private backoffStates: Map<string, BackoffState> = new Map();
+  private lastFetchTimes: Map<string, number> = new Map();
+  private lastOkTimes: Map<string, number> = new Map();
 
   constructor() {
     this.config = this.loadBreakingConfig();
@@ -76,7 +102,7 @@ class BreakingScheduler {
       const configData = fs.readFileSync(configPath, 'utf8');
       return JSON.parse(configData);
     } catch (error) {
-      console.error('[breaking][config] Failed to load breaking sources config:', error);
+      console.error('[breaking][error] Failed to load breaking sources config:', error);
       return {
         sources: [],
         default_interval_ms: 120000,
@@ -92,7 +118,7 @@ class BreakingScheduler {
       const configData = fs.readFileSync(configPath, 'utf8');
       return JSON.parse(configData);
     } catch (error) {
-      console.error('[breaking][config] Failed to load event windows config:', error);
+      console.error('[breaking][error] Failed to load event windows config:', error);
       return { events: [] };
     }
   }
@@ -100,186 +126,209 @@ class BreakingScheduler {
   // Check if we're currently in an event window
   private isInEventWindow(sourceName: string): boolean {
     const now = new Date();
-    const currentDay = now.toLocaleDateString('en-US', { weekday: 'long' });
-    const currentTime = now.toLocaleTimeString('en-US', { 
-      hour12: false, 
-      hour: '2-digit', 
-      minute: '2-digit' 
-    });
-
+    const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    
     for (const event of this.eventWindows.events) {
-      if (event.relevant_sources.includes(sourceName) &&
-          event.days.includes(currentDay) &&
-          currentTime >= event.start_time &&
-          currentTime <= event.end_time) {
-        return true;
+      if (event.relevant_sources.includes(sourceName) && event.days.includes(dayOfWeek)) {
+        const startTime = new Date(event.start_time);
+        const endTime = new Date(event.end_time);
+        
+        if (now >= startTime && now <= endTime) {
+          return true;
+        }
       }
     }
-
+    
     return false;
   }
 
   // Get the appropriate interval for a source
   private getSourceInterval(source: BreakingSource): number {
-    if (source.event_window && this.isInEventWindow(source.name)) {
+    if (this.isInEventWindow(source.name)) {
       return this.config.event_window_interval_ms;
     }
-    return source.interval_ms;
+    
+    if (source.mode === 'watchlist') {
+      return this.config.watchlist_interval_ms;
+    }
+    
+    return source.interval_ms || this.config.default_interval_ms;
   }
 
-  // Fetch RSS feed with ETag/If-Modified-Since support
-  private async fetchRSSFeed(source: BreakingSource): Promise<RSSItem[]> {
+  // Apply exponential backoff
+  private applyBackoff(sourceName: string, error: string): number {
+    const now = Date.now();
+    const backoffState = this.backoffStates.get(sourceName) || {
+      currentInterval: this.config.default_interval_ms,
+      baseInterval: this.config.default_interval_ms,
+      attempt: 0,
+      maxAttempts: 6,
+      lastError: '',
+      lastErrorTime: 0
+    };
+
+    // Check if this is a new error or if we should continue backoff
+    const isNewError = error !== backoffState.lastError || (now - backoffState.lastErrorTime) > 300000; // 5 minutes
+    
+    if (isNewError) {
+      backoffState.attempt = 1;
+      backoffState.lastError = error;
+      backoffState.lastErrorTime = now;
+    } else {
+      backoffState.attempt++;
+    }
+
+    // Calculate backoff interval
+    let backoffInterval = backoffState.baseInterval;
+    if (backoffState.attempt > 1) {
+      backoffInterval = Math.min(
+        backoffState.baseInterval * Math.pow(2, backoffState.attempt - 1),
+        300000 // Cap at 5 minutes
+      );
+    }
+
+    backoffState.currentInterval = backoffInterval;
+    this.backoffStates.set(sourceName, backoffState);
+
+    if (backoffState.attempt <= backoffState.maxAttempts) {
+      log('warn', `${sourceName}: ${error}, backoff=${Math.round(backoffInterval/1000)}s (attempt ${backoffState.attempt}/${backoffState.maxAttempts})`);
+    } else {
+      log('error', `${sourceName}: Max backoff attempts reached, using base interval`);
+      backoffState.currentInterval = backoffState.baseInterval;
+    }
+
+    return backoffState.currentInterval;
+  }
+
+  // Reset backoff on successful fetch
+  private resetBackoff(sourceName: string): void {
+    const backoffState = this.backoffStates.get(sourceName);
+    if (backoffState) {
+      backoffState.attempt = 0;
+      backoffState.currentInterval = backoffState.baseInterval;
+      backoffState.lastError = '';
+      this.backoffStates.set(sourceName, backoffState);
+    }
+  }
+
+  // Fetch RSS feed with error handling and backoff
+  private async fetchRSSFeed(source: BreakingSource): Promise<any[]> {
+    const now = Date.now();
+    this.lastFetchTimes.set(source.name, now);
+
     try {
-      const headers: Record<string, string> = {
-        'User-Agent': 'Pulse-MVP-Breaking-Ingestor/1.0'
-      };
-
-      // Add ETag if we have it
-      const etag = this.etags.get(source.name);
-      if (etag) {
-        headers['If-None-Match'] = etag;
-      }
-
-      // Add If-Modified-Since if we have it
-      const lastMod = this.lastModified.get(source.name);
-      if (lastMod) {
-        headers['If-Modified-Since'] = lastMod;
-      }
-
-      console.log(`[breaking][fetch] ${source.name} - interval: ${this.getSourceInterval(source)}ms`);
-      
       const response = await axios.get(source.url, {
-        timeout: 8000,
-        headers,
-        validateStatus: (status) => status < 500 // Accept 304 Not Modified
-      });
-
-      // Handle 304 Not Modified
-      if (response.status === 304) {
-        console.log(`[breaking][cache] ${source.name} - no new content`);
-        return [];
-      }
-
-      // Store ETag and Last-Modified for next request
-      const newEtag = response.headers.etag;
-      if (newEtag) {
-        this.etags.set(source.name, newEtag);
-      }
-
-      const lastModified = response.headers['last-modified'];
-      if (lastModified) {
-        this.lastModified.set(source.name, lastModified);
-      }
-
-      const parsed = await parseXML(response.data) as RSSFeed;
-      const channel = parsed.rss?.channel?.[0];
-      
-      if (!channel?.item) {
-        return [];
-      }
-
-      return channel.item;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 429) {
-          console.log(`[breaking][rate-limit] ${source.name} - backing off`);
-          // Back off for rate limiting
-          await this.backoff(source.name);
-        } else if (error.response && error.response.status >= 500) {
-          console.log(`[breaking][server-error] ${source.name} - backing off`);
-          // Back off for server errors
-          await this.backoff(source.name);
-        } else {
-          console.error(`[breaking][error] ${source.name}:`, error.message);
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Pulse-Breaking/1.0',
+          'If-None-Match': this.etags.get(source.name) || '',
+          'If-Modified-Since': this.lastModified.get(source.name) || ''
         }
-      } else {
-        console.error(`[breaking][error] ${source.name}:`, error);
-      }
-      return [];
-    }
-  }
-
-  // Backoff mechanism for rate limiting and server errors
-  private async backoff(sourceName: string): Promise<void> {
-    const currentTimer = this.timers.get(sourceName);
-    if (currentTimer) {
-      clearTimeout(currentTimer);
-    }
-
-    // Exponential backoff: double the interval
-    const source = this.config.sources.find(s => s.name === sourceName);
-    if (source) {
-      const backoffInterval = this.getSourceInterval(source) * 2;
-      console.log(`[breaking][backoff] ${sourceName} - backing off for ${backoffInterval}ms`);
-      
-      const timer = setTimeout(() => {
-        this.scheduleSource(source);
-      }, backoffInterval);
-      
-      this.timers.set(sourceName, timer);
-    }
-  }
-
-  // Process RSS items for a source
-  private async processRSSItems(items: RSSItem[], source: BreakingSource): Promise<void> {
-    for (const item of items) {
-      const title = item.title?.[0];
-      const description = item.description?.[0];
-      const link = item.link?.[0];
-      const pubDate = item.pubDate?.[0];
-
-      if (!title || !link) {
-        continue;
-      }
-
-      // Filter out non-actionable content
-      if (this.shouldRejectArticle(title, description || '')) {
-        continue;
-      }
-
-      // Publish stub immediately
-      const result = await publishStub({
-        title,
-        source: source.name,
-        url: link,
-        published_at: pubDate,
-        description
       });
 
-      if (result.success) {
-        // Schedule enrichment asynchronously
-        setTimeout(async () => {
-          await enrichItem(result.id);
-        }, 1000); // Small delay to ensure stub is written
+      // Update ETag and Last-Modified
+      if (response.headers.etag) {
+        this.etags.set(source.name, response.headers.etag);
+      }
+      if (response.headers['last-modified']) {
+        this.lastModified.set(source.name, response.headers['last-modified']);
+      }
+
+      // Reset backoff on success
+      this.resetBackoff(source.name);
+      this.lastOkTimes.set(source.name, now);
+
+      if (response.status === 304) {
+        log('debug', `${source.name}: No new content`);
+        return [];
+      }
+
+      const feed = await parseXML(response.data) as RSSFeed;
+      const items = feed.rss?.channel?.[0]?.item || [];
+      
+      log('debug', `${source.name}: Fetched ${items.length} items`);
+      return items;
+
+    } catch (error: any) {
+      let errorMessage = 'Unknown error';
+      let shouldBackoff = false;
+
+      if (error.code === 'ENOTFOUND') {
+        errorMessage = 'DNS ENOTFOUND';
+        shouldBackoff = true;
+      } else if (error.code === 'ECONNRESET') {
+        errorMessage = 'Connection reset';
+        shouldBackoff = true;
+      } else if (error.response?.status >= 500) {
+        errorMessage = `HTTP ${error.response.status}`;
+        shouldBackoff = true;
+      } else if (error.response?.status === 429) {
+        errorMessage = 'Rate limited (429)';
+        shouldBackoff = true;
+      } else if (error.code === 'ETIMEDOUT') {
+        errorMessage = 'Request timeout';
+        shouldBackoff = true;
+      } else {
+        errorMessage = error.message || 'Network error';
+      }
+
+      if (shouldBackoff) {
+        const backoffInterval = this.applyBackoff(source.name, errorMessage);
+        // Schedule next attempt with backoff
+        setTimeout(() => {
+          this.scheduleSource(source);
+        }, backoffInterval);
+        return [];
+      } else {
+        log('error', `${source.name}: ${errorMessage}`);
+        return [];
       }
     }
   }
 
-  // Filtering rules for actionable market news
-  private shouldRejectArticle(title: string, description: string): boolean {
-    const combinedText = `${title} ${description}`.toLowerCase();
-    
-    const rejectPatterns = [
-      /\b(top|things to watch|best|worst|how to|opinion|guide|tips|review|ranking|list)\b/i,
-      /\b(cramer|podcast|interview|show|announcement|takeaways)\b/i,
-      /\b(lifestyle|culture|travel|education|college|university)\b/i,
-      /\b(sports|movie|celebrity|award|entertainment|retirement|smart moves)\b/i,
-      /\b(here are|these are|what to|when you|options when)\b/i
-    ];
-    
-    for (const pattern of rejectPatterns) {
-      if (pattern.test(combinedText)) {
-        return true;
+  // Process RSS items
+  private async processRSSItems(items: any[], source: BreakingSource): Promise<void> {
+    for (const item of items) {
+      try {
+        const title = item.title?.[0];
+        const link = item.link?.[0];
+        const pubDate = item.pubDate?.[0];
+
+        if (!title || !link) {
+          continue;
+        }
+
+        // Skip certain types of content
+        if (this.shouldSkipContent(title)) {
+          continue;
+        }
+
+        // Publish stub immediately
+        const result = await publishStub({
+          title,
+          source: source.name,
+          url: link,
+          published_at: pubDate
+        });
+
+        if (result.success) {
+          // Schedule enrichment
+          setTimeout(async () => {
+            await enrichItem(result.id);
+          }, 2000);
+        }
+
+      } catch (error) {
+        console.error(`[breaking][error] Error processing item from ${source.name}:`, error);
       }
     }
-    
-    const hasFinancialContent = /\b(\d+%|\$\d+|[A-Z]{2,4}\b|fed|ecb|boe|treasury|sec)\b/i.test(combinedText);
-    const wordCount = title.split(/\s+/).length;
-    if (wordCount > 15 && !hasFinancialContent) {
-      return true;
-    }
-    
+  }
+
+  // Check if content should be skipped
+  private shouldSkipContent(title: string): boolean {
     const titleLower = title.toLowerCase();
+    
+    // Skip listicles and similar content
     if (titleLower.startsWith('here are') || 
         titleLower.startsWith('these are') || 
         titleLower.startsWith('what to') ||
@@ -302,7 +351,7 @@ class BreakingScheduler {
           await this.processRSSItems(items, source);
         }
       } catch (error) {
-        console.error(`[breaking][process] Error processing ${source.name}:`, error);
+        console.error(`[breaking][error] Error processing ${source.name}:`, error);
       }
       
       // Reschedule for next interval
@@ -315,11 +364,11 @@ class BreakingScheduler {
   // Start the breaking scheduler
   public start(): void {
     if (this.isRunning) {
-      console.log('[breaking][scheduler] Already running');
+      log('info', 'Already running');
       return;
     }
 
-    console.log('[breaking][scheduler] Starting breaking news scheduler');
+    log('info', 'Starting breaking news scheduler');
     this.isRunning = true;
 
     // Schedule all sources
@@ -335,20 +384,20 @@ class BreakingScheduler {
 
   // Stop the breaking scheduler
   public stop(): void {
-    console.log('[breaking][scheduler] Stopping breaking news scheduler');
+    log('info', 'Stopping breaking news scheduler');
     this.isRunning = false;
 
     // Clear all timers
     for (const [sourceName, timer] of this.timers) {
       clearTimeout(timer);
-      console.log(`[breaking][scheduler] Stopped ${sourceName}`);
+      log('info', `Stopped ${sourceName}`);
     }
     this.timers.clear();
   }
 
   // Reload configuration
   private reloadConfig(): void {
-    console.log('[breaking][scheduler] Reloading configuration');
+    log('info', 'Reloading configuration');
     this.config = this.loadBreakingConfig();
     this.eventWindows = this.loadEventWindowsConfig();
   }
@@ -361,19 +410,69 @@ class BreakingScheduler {
       interval_ms: number;
       nextPoll: number;
       inEventWindow: boolean;
+      lastFetchAt: string | null;
+      lastOkAt: string | null;
+      backoffState: BackoffState | null;
     }>;
   } {
-    const sources = this.config.sources.map(source => ({
-      name: source.name,
-      interval_ms: this.getSourceInterval(source),
-      nextPoll: 0, // Would need to track next poll time
-      inEventWindow: this.isInEventWindow(source.name)
-    }));
+    const sources = this.config.sources.map(source => {
+      const backoffState = this.backoffStates.get(source.name) || null;
+      const lastFetchAt = this.lastFetchTimes.get(source.name);
+      const lastOkAt = this.lastOkTimes.get(source.name);
+      
+      return {
+        name: source.name,
+        interval_ms: this.getSourceInterval(source),
+        nextPoll: 0, // Would need to track next poll time
+        inEventWindow: this.isInEventWindow(source.name),
+        lastFetchAt: lastFetchAt ? new Date(lastFetchAt).toISOString() : null,
+        lastOkAt: lastOkAt ? new Date(lastOkAt).toISOString() : null,
+        backoffState
+      };
+    });
 
     return {
       isRunning: this.isRunning,
       sources
     };
+  }
+
+  // Force immediate fetch for specific sources
+  public async forceFetch(sources: string[]): Promise<{ scheduled: string[]; skipped: string[]; reason: string }> {
+    const scheduled: string[] = [];
+    const skipped: string[] = [];
+    
+    for (const sourceName of sources) {
+      const source = this.config.sources.find(s => s.name === sourceName);
+      if (source) {
+        scheduled.push(sourceName);
+        // Clear any existing timer for this source
+        const existingTimer = this.timers.get(sourceName);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+        // Force immediate fetch
+        this.scheduleSource(source);
+      } else {
+        skipped.push(sourceName);
+      }
+    }
+    
+    return {
+      scheduled,
+      skipped,
+      reason: skipped.length > 0 ? 'Unknown sources' : 'All sources scheduled'
+    };
+  }
+
+  // Reset in-memory state
+  public resetState(): void {
+    this.etags.clear();
+    this.lastModified.clear();
+    this.backoffStates.clear();
+    this.lastFetchTimes.clear();
+    this.lastOkTimes.clear();
+    log('info', 'Reset in-memory state');
   }
 }
 

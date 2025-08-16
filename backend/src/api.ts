@@ -8,6 +8,19 @@ import { metrics } from './routes/metrics';
 import { adminRoutes } from './routes/admin';
 import { scoreNews } from './utils/scoring';
 
+// Environment getter functions
+const getNodeEnv = () => process.env.NODE_ENV;
+const getFirebaseProjectId = () => process.env.FIREBASE_PROJECT_ID;
+const getFirebaseClientEmail = () => process.env.FIREBASE_CLIENT_EMAIL;
+const getFirebasePrivateKey = () => process.env.FIREBASE_PRIVATE_KEY;
+const getImpactMode = () => process.env.IMPACT_MODE;
+const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
+const getConfidenceV2 = () => process.env.CONFIDENCE_V2;
+const getConfidenceV2Contrast = () => process.env.CONFIDENCE_V2_CONTRAST;
+const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
+const getVerificationMode = () => process.env.VERIFICATION_MODE;
+const getImpactV3Compare = () => process.env.IMPACT_V3_COMPARE;
+
 // Type for watchlist data structure
 type WatchlistData = { 
   tickers: string[]; 
@@ -36,7 +49,7 @@ const watchlistLimiter = rateLimit({
 // Debug endpoint for Firestore access verification
 router.get('/debug/firestore', async (_req, res) => {
   // Environment guard - only allow in non-production
-  if (process.env.NODE_ENV === 'production') {
+  if (getNodeEnv() === 'production') {
     return res.status(404).json({
       ok: false,
       error: 'Debug endpoint not available in production',
@@ -80,7 +93,7 @@ router.get('/debug/firestore', async (_req, res) => {
 // Debug endpoint for Firebase credentials verification
 router.get('/debug/creds', async (_req, res) => {
   // Environment guard - only allow in non-production
-  if (process.env.NODE_ENV === 'production') {
+  if (getNodeEnv() === 'production') {
     return res.status(404).json({
       ok: false,
       error: 'Debug endpoint not available in production',
@@ -89,9 +102,9 @@ router.get('/debug/creds', async (_req, res) => {
   }
 
   try {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const usesADC = !process.env.FIREBASE_PRIVATE_KEY; // If no private key, likely using ADC
+    const projectId = getFirebaseProjectId();
+    const clientEmail = getFirebaseClientEmail();
+    const usesADC = !getFirebasePrivateKey(); // If no private key, likely using ADC
 
     // Test if we can list collections (harmless permission probe)
     let canList = false;
@@ -131,7 +144,7 @@ router.get('/debug/creds', async (_req, res) => {
 // Debug endpoint for listing Firestore collections
 router.get('/debug/firestore-list', async (_req, res) => {
   // Environment guard - only allow in non-production
-  if (process.env.NODE_ENV === 'production') {
+  if (getNodeEnv() === 'production') {
     return res.status(404).json({
       ok: false,
       error: 'Debug endpoint not available in production',
@@ -191,7 +204,7 @@ router.get('/debug/firestore-list', async (_req, res) => {
 // Admin endpoint for manual ingestion
 router.post('/admin/ingest-now', async (_req, res) => {
   // Environment guard - only allow in non-production
-  if (process.env.NODE_ENV === 'production') {
+  if (getNodeEnv() === 'production') {
     return res.status(404).json({
       ok: false,
       error: 'Admin endpoint not available in production',
@@ -255,99 +268,10 @@ const purgeCollection = async (collectionName: string, limit: number = 500): Pro
   return totalDeleted;
 };
 
-// Admin endpoint for purging feed data
-router.post('/admin/purge-feed', async (_req, res) => {
-  // Security checks
-  const adminToken = process.env.ADMIN_TOKEN;
-  if (!adminToken) {
-    return res.status(403).json({
-      ok: false,
-      error: 'ADMIN_TOKEN not configured',
-      code: 'ADMIN_TOKEN_MISSING'
-    });
-  }
-
-  const providedToken = _req.headers['x-admin-token'];
-  if (providedToken !== adminToken) {
-    return res.status(403).json({
-      ok: false,
-      error: 'Invalid admin token',
-      code: 'INVALID_TOKEN'
-    });
-  }
-
-  const confirm = _req.query.confirm;
-  if (confirm !== 'PURGE') {
-    return res.status(400).json({
-      ok: false,
-      error: 'Must include confirm=PURGE query parameter',
-      code: 'CONFIRMATION_REQUIRED'
-    });
-  }
-
-  // Determine if real deletion is allowed
-  const allowRealDeletion = process.env.ADMIN_ALLOW_PURGE === 'true';
-  const requestedDryRun = _req.query.dry === '1';
-  const dryRun = !allowRealDeletion || requestedDryRun;
-  const dryRunForced = !allowRealDeletion && !requestedDryRun;
-  
-
-  
-  const startTime = Date.now();
-
-  try {
-    const collections = ['news', 'trending_topics', 'trends', 'NewsCards'];
-    const deleted: { [key: string]: number } = {};
-
-    if (dryRun) {
-      // Dry run - just count documents
-      for (const collectionName of collections) {
-        try {
-          const snapshot = await getDb().collection(collectionName).get();
-          deleted[collectionName] = snapshot.size;
-        } catch (error) {
-          // Collection doesn't exist, count as 0
-          deleted[collectionName] = 0;
-        }
-      }
-    } else {
-      // Real purge
-      for (const collectionName of collections) {
-        try {
-          deleted[collectionName] = await purgeCollection(collectionName);
-        } catch (error) {
-          // Collection doesn't exist, count as 0
-          deleted[collectionName] = 0;
-        }
-      }
-    }
-
-    const tookMs = Date.now() - startTime;
-    
-    console.log('[purge]', { dryRun, deleted, tookMs });
-    
-    res.json({
-      ok: true,
-      dryRun,
-      dryRunForced,
-      deleted,
-      took_ms: tookMs
-    });
-    return;
-  } catch (error) {
-    console.error('[purge] Error:', error);
-    res.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-    return;
-  }
-});
-
 // Debug endpoint for Impact explanation
 router.get('/admin/impact-explain', async (req, res) => {
   // Environment guard - only allow in non-production
-  if (process.env.NODE_ENV === 'production') {
+  if (getNodeEnv() === 'production') {
     return res.status(404).json({
       ok: false,
       error: 'Debug endpoint not available in production',
@@ -381,7 +305,7 @@ router.get('/admin/impact-explain', async (req, res) => {
     const item = docSnap.data() as any;
     
     // Check if Impact V3 is enabled
-    const impactMode = process.env.IMPACT_MODE;
+    const impactMode = getImpactMode();
     
     if (impactMode === 'v3') {
       // Use Impact V3
@@ -647,6 +571,9 @@ router.get('/feed', async (req, res) => {
     const newsLimit = limit ? parseInt(limit as string) : 20;
     let items = await getNewsItems(newsLimit);
     
+    // Filter for new version items only (v2)
+    items = items.filter(item => item.version === 'v2');
+    
     // Apply debug if requested
     if (debugConfidence || debugImpact || debugVerification) {
       items = items.map(item => {
@@ -674,7 +601,7 @@ router.get('/feed', async (req, res) => {
         }
         
         if (debugVerification) {
-          result.verification_debug = scoredItem._verification_debug;
+          result._verification_debug = scoredItem._verification_debug;
         }
         
         return result;
@@ -682,7 +609,7 @@ router.get('/feed', async (req, res) => {
     }
     
     // Apply timestamp debug if requested (dev only)
-    if (debugTime && process.env.NODE_ENV === 'development') {
+    if (debugTime && getNodeEnv() === 'development') {
       items = items.map(item => ({
         ...item,
         _time_debug: {

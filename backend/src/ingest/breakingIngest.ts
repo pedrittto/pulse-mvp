@@ -4,6 +4,65 @@ import { generateArticleHash } from '../storage';
 import { scoreNews } from '../utils/scoring';
 import { composeHeadline, composeSummary } from '../utils/factComposer';
 import { sanitizeText } from '../utils/sanitize';
+import { computeVerification } from '../utils/verification';
+import { getConfig } from '../config/env';
+
+// Environment getter functions
+const getBreakingLogLevel = () => process.env.BREAKING_LOG_LEVEL || 'info';
+
+// Logging utilities
+const logLevels = { debug: 0, info: 1, warn: 2, error: 3 };
+const currentLogLevel = logLevels[getBreakingLogLevel() as keyof typeof logLevels] ?? 1;
+
+const log = (level: keyof typeof logLevels, message: string, ...args: any[]) => {
+  if (logLevels[level] >= currentLogLevel) {
+    console.log(`[breaking][${level}] ${message}`, ...args);
+  }
+};
+
+// Per-source aggregation counters (60-second window)
+interface SourceStats {
+  fetched: number;
+  new: number;
+  duplicate: number;
+  errors: number;
+  lastReset: number;
+}
+
+const sourceStats = new Map<string, SourceStats>();
+
+const getOrCreateStats = (source: string): SourceStats => {
+  const now = Date.now();
+  const stats = sourceStats.get(source);
+  
+  if (!stats || (now - stats.lastReset) > 60000) {
+    const newStats: SourceStats = { fetched: 0, new: 0, duplicate: 0, errors: 0, lastReset: now };
+    sourceStats.set(source, newStats);
+    return newStats;
+  }
+  
+  return stats;
+};
+
+const incrementStats = (source: string, type: keyof Omit<SourceStats, 'lastReset'>) => {
+  const stats = getOrCreateStats(source);
+  stats[type]++;
+};
+
+// Emit summary every minute
+setInterval(() => {
+  for (const [source, stats] of sourceStats.entries()) {
+    if (stats.fetched > 0) {
+      log('info', `${source}: fetched=${stats.fetched} new=${stats.new} duplicate=${stats.duplicate} errors=${stats.errors} interval=60s`);
+      // Reset for next window
+      stats.fetched = 0;
+      stats.new = 0;
+      stats.duplicate = 0;
+      stats.errors = 0;
+      stats.lastReset = Date.now();
+    }
+  }
+}, 60000);
 
 export interface BreakingStub {
   id: string;
@@ -14,11 +73,13 @@ export interface BreakingStub {
   category: string;
   impact: string;
   confidence: number | null;
+  verification?: string;
   why: string;
   tickers: string[];
   published_at?: string;
   thread_id?: string;
   primary_entity?: string;
+  version?: string;
 }
 
 export interface LatencyMetrics {
@@ -57,11 +118,13 @@ export const publishStub = async (item: {
       category: '',
       impact: '',
       confidence: null,
+      verification: 'reported', // Default verification status
       why: '',
       tickers: [],
       published_at: item.published_at || arrivalAt,
       thread_id: generateArticleHash(item.title, undefined), // Simple thread ID
-      primary_entity: ''
+      primary_entity: '',
+      version: 'v2' // Mark as new version
     };
     
     // Check for existing document to avoid duplicates
@@ -69,7 +132,8 @@ export const publishStub = async (item: {
     const docSnap = await docRef.get();
     
     if (docSnap.exists) {
-      console.log(`[breaking][skip] Duplicate stub already exists: ${id}`);
+      log('debug', `Duplicate stub already exists: ${id}`);
+      incrementStats(item.source, 'duplicate');
       return { id, success: false, error: 'duplicate' };
     }
     
@@ -78,11 +142,13 @@ export const publishStub = async (item: {
     
     const publishTime = Date.now() - startTime;
     
-    console.log(`[breaking][publish] Stub published: ${id} in ${publishTime}ms`, {
+    log('info', `Stub published: ${id} in ${publishTime}ms`, {
       title: item.title.substring(0, 60),
       source: item.source,
       publish_time_ms: publishTime
     });
+    
+    incrementStats(item.source, 'new');
     
     // Log latency metrics
     await logLatencyMetrics({
@@ -96,36 +162,34 @@ export const publishStub = async (item: {
     return { id, success: true };
     
   } catch (error) {
+    incrementStats(item.source, 'errors');
     console.error(`[breaking][error] Failed to publish stub:`, error);
     return { 
-      id: generateArticleHash(item.title), 
+      id: '', 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
     };
   }
 };
 
-// Enrich a stub with full scoring and analysis
+// Enrich stub with full scoring and metadata
 export const enrichItem = async (id: string): Promise<{ success: boolean; error?: string }> => {
   try {
     const db = getDb();
     const newsCollection = db.collection('news');
-    
-    // Get the stub
     const docRef = newsCollection.doc(id);
-    const docSnap = await docRef.get();
     
+    const docSnap = await docRef.get();
     if (!docSnap.exists) {
-      console.log(`[breaking][enrich] Stub not found: ${id}`);
-      return { success: false, error: 'stub_not_found' };
+      return { success: false, error: 'document not found' };
     }
     
     const stub = docSnap.data() as BreakingStub;
     
-    // Extract primary entity from title
+    // Extract primary entity from headline
     const primaryEntity = extractPrimaryEntity(stub.title);
     
-    // Compose factual content
+    // Generate headline and description
     const headline = composeHeadline({
       title: stub.title,
       description: stub.why || '',
@@ -139,6 +203,18 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
       source: stub.source,
       tickers: primaryEntity ? [primaryEntity] : []
     });
+    
+    // Compute verification if enabled
+    let verification = 'reported';
+    if (getConfig().verificationMode === 'v1') {
+      const verificationResult = computeVerification({
+        sources: [{ domain: stub.source, isPrimary: true }],
+        headline: headline,
+        body: description,
+        published_at: stub.published_at || stub.arrival_at
+      });
+      verification = verificationResult.status;
+    }
     
     // Compute scoring
     const score = scoreNews({
@@ -160,6 +236,7 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
       impact: score.impact as Impact,
       impact_score: score.impact_score,
       confidence: score.confidence,
+      verification: verification,
       primary_entity: primaryEntity || '',
       category: score.tags?.includes('Macro') ? 'macro' : '',
       thread_id: threadId,
@@ -169,7 +246,7 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
     
     await docRef.update(enrichedData);
     
-    console.log(`[breaking][enrich] Enriched: ${id}`, {
+    log('info', `Enriched: ${id}`, {
       impact: score.impact,
       confidence: score.confidence,
       primary_entity: primaryEntity
@@ -178,7 +255,7 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
     return { success: true };
     
   } catch (error) {
-    console.error(`[breaking][enrich] Failed to enrich ${id}:`, error);
+    console.error(`[breaking][error] Failed to enrich ${id}:`, error);
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
@@ -233,7 +310,7 @@ const logLatencyMetrics = async (metrics: LatencyMetrics, source: string): Promi
     
     await metricsCollection.add(metricDoc);
   } catch (error) {
-    console.error('[breaking][metrics] Failed to log latency metrics:', error);
+    console.error('[breaking][error] Failed to log latency metrics:', error);
   }
 };
 
@@ -284,7 +361,26 @@ export const getSourceLatencyStats = async (source: string, hours: number = 24):
     };
     
   } catch (error) {
-    console.error(`[breaking][stats] Failed to get latency stats for ${source}:`, error);
+    console.error(`[breaking][error] Failed to get latency stats for ${source}:`, error);
     return { p50: 0, p90: 0, count: 0, avg_publish_ms: 0 };
   }
+};
+
+// Get current source statistics
+export const getCurrentSourceStats = () => {
+  const stats: Record<string, { fetched: number; new: number; duplicate: number; errors: number }> = {};
+  for (const [source, sourceStat] of sourceStats.entries()) {
+    stats[source] = {
+      fetched: sourceStat.fetched,
+      new: sourceStat.new,
+      duplicate: sourceStat.duplicate,
+      errors: sourceStat.errors
+    };
+  }
+  return stats;
+};
+
+// Reset source statistics (for admin use)
+export const resetSourceStats = () => {
+  sourceStats.clear();
 };

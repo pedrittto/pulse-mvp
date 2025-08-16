@@ -1,0 +1,35 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔒 Running security checks..."
+
+# Collect only relevant files; exclude tests, docs, examples, env.example, and the hook itself
+DIFF_CONTENT="$(git diff --cached -- . \
+  ':(exclude)test/**' \
+  ':(exclude)tests/**' \
+  ':(exclude)__tests__/**' \
+  ':(exclude)docs/**' \
+  ':(exclude)**/*.md' \
+  ':(exclude)**/*.example' \
+  ':(exclude)**/env.example' \
+  ':(exclude)SECURITY_AUDIT_REPORT.md' \
+  ':(exclude).husky/**')"
+
+# Regex for real secrets
+SECRET_REGEX='(sk-|pk_|AIza|1//|ya29|eyJ|-----BEGIN|-----END)'
+
+# Whitelist for safe placeholders and test values
+WHITELIST_REGEX='(<PLACEHOLDER>|test-token|test-admin-token|your-admin-token-here|BEGIN KEY \(placeholder\)|END KEY \(placeholder\))'
+
+# Scan staged diff
+echo "$DIFF_CONTENT" \
+  | grep -E "$SECRET_REGEX" \
+  | grep -Ev "$WHITELIST_REGEX" >/dev/null
+
+if [ $? -eq 0 ]; then
+  echo "❌ ERROR: Potential secrets detected in staged changes (not placeholders)."
+  echo "    Fix or replace with safe placeholders before committing."
+  exit 1
+fi
+
+echo "✅ Security checks passed."

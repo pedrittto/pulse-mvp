@@ -46,9 +46,9 @@ export const W_P4_V22 = 0.12; // Accountability
 export const W_P5_V22 = 0.06; // Market reaction
 
 // V2.2 Configuration
-export const CONFIDENCE_GAMMA = parseFloat(process.env.CONFIDENCE_GAMMA || '2.0');
-export const CONFIDENCE_RANGE_MIN = parseInt(process.env.CONFIDENCE_RANGE_MIN || '10');
-export const CONFIDENCE_RANGE_MAX = parseInt(process.env.CONFIDENCE_RANGE_MAX || '98');
+export const getConfidenceGamma = () => parseFloat(process.env.CONFIDENCE_GAMMA || '2.0');
+export const getConfidenceRangeMin = () => parseInt(process.env.CONFIDENCE_RANGE_MIN || '10');
+export const getConfidenceRangeMax = () => parseInt(process.env.CONFIDENCE_RANGE_MAX || '98');
 
 // Freshness half-life (minutes)
 export const FRESHNESS_HALF_LIFE = 180; // τ=180 minutes
@@ -70,12 +70,15 @@ export function toPercent(C: number): number {
 }
 
 // V2.2 contrast and mapping functions
-export function contrastV22(S: number, gamma: number = CONFIDENCE_GAMMA): number {
-  return clamp01(0.5 + gamma * (S - 0.5));
+export function contrastV22(S: number, gamma?: number): number {
+  const actualGamma = gamma ?? getConfidenceGamma();
+  return clamp01(0.5 + actualGamma * (S - 0.5));
 }
 
-export function toPercentV22(C: number, min: number = CONFIDENCE_RANGE_MIN, max: number = CONFIDENCE_RANGE_MAX): number {
-  return Math.max(min, Math.min(max, min + Math.round((max - min) * C)));
+export function toPercentV22(C: number, min?: number, max?: number): number {
+  const actualMin = min ?? getConfidenceRangeMin();
+  const actualMax = max ?? getConfidenceRangeMax();
+  return Math.max(actualMin, Math.min(actualMax, actualMin + Math.round((actualMax - actualMin) * C)));
 }
 
 export function clamp(v: number, min: number, max: number): number {

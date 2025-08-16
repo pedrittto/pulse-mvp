@@ -1,9 +1,12 @@
 import cron from 'node-cron';
 import { ingestRSSFeeds } from './ingest/rss';
 
+// Environment getter function
+const getCronSchedule = () => process.env.CRON_SCHEDULE || '*/3 * * * *';
+
 // Schedule RSS ingestion
 export const startRSSIngestion = (): void => {
-  const schedule = process.env.CRON_SCHEDULE || '*/3 * * * *';
+  const schedule = getCronSchedule();
   
   console.log(`Starting RSS ingestion cron job with schedule: ${schedule}`);
   

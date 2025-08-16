@@ -78,9 +78,13 @@ const DEFAULT_CONFIG: ImpactV3Config = {
   }
 };
 
+// Environment getter functions
+const getImpactV3Config = () => process.env.IMPACT_V3_CONFIG;
+const getImpactV3Compare = () => process.env.IMPACT_V3_COMPARE;
+
 // Load configuration from file if specified
 export function loadConfig(): ImpactV3Config {
-  const configPath = process.env.IMPACT_V3_CONFIG;
+  const configPath = getImpactV3Config();
   if (!configPath) {
     return DEFAULT_CONFIG;
   }
@@ -620,7 +624,7 @@ export function logImpactComparison(
   v2Category: string,
   v3Result: ImpactV3Result
 ): void {
-  if (process.env.IMPACT_V3_COMPARE !== '1') {
+  if (getImpactV3Compare() !== '1') {
     return;
   }
 

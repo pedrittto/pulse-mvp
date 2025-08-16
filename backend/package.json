@@ -8,6 +8,8 @@
     "build": "rimraf dist && tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "backfill:facts": "ts-node --transpile-only scripts/backfillFacts.ts",
+    "smoke:breaking": "node scripts/smoke-breaking.js",
+    "kill:4000": "powershell -Command \"Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }\"",
     "test": "jest"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
     "@types/supertest": "^6.0.3",
     "@types/xml2js": "^0.4.14",
     "dotenv": "^17.2.1",
+    "husky": "^9.1.7",
     "jest": "^30.0.5",
     "nodemon": "^3.0.2",
     "rimraf": "^6.0.1",

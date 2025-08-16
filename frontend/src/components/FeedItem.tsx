@@ -5,6 +5,7 @@ import VerificationBadge from './VerificationBadge'
 import HelpIcon from './HelpIcon'
 import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
+import { config } from '@/lib/config'
 import { memo, useMemo, useState, useEffect } from 'react'
 
 interface FeedItemProps {
@@ -45,8 +46,8 @@ function FeedItem({ item }: FeedItemProps) {
     }
   }
 
-  // Check if verification mode is enabled (frontend environment variable or item has verification field)
-  const isVerificationMode = process.env.NEXT_PUBLIC_VERIFICATION_MODE === 'v1' || item.verification;
+  // Check if verification mode is enabled
+  const isVerificationMode = config.verificationMode === 'v1' || item.verification;
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">

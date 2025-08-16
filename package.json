@@ -1,5 +1,11 @@
 {
-  "dependencies": {
-    "dotenv": "^17.2.1"
+  "name": "pulse-mvp",
+  "version": "1.0.0",
+  "description": "Pulse MVP - News aggregation and analysis platform",
+  "scripts": {
+    "prepare": "husky install"
+  },
+  "devDependencies": {
+    "husky": "^9.0.11"
   }
 }

@@ -2,6 +2,15 @@ import { scoreConfidenceV2, scoreConfidenceV22, CONF_MIN, CONF_MAX, clamp } from
 import { scoreImpactV3, logImpactComparison, ImpactV3Result } from './impactV3';
 import { computeVerification, computeVerificationWithDebug, VerificationInputs, VerificationStatus } from './verification';
 
+// Environment getter functions
+const getImpactMode = () => process.env.IMPACT_MODE;
+const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
+const getConfidenceV2 = () => process.env.CONFIDENCE_V2;
+const getConfidenceV2Contrast = () => process.env.CONFIDENCE_V2_CONTRAST;
+const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
+const getVerificationMode = () => process.env.VERIFICATION_MODE;
+const getImpactV3Compare = () => process.env.IMPACT_V3_COMPARE;
+
 export type Score = { 
   impact_score: number; 
   impact: 'L'|'M'|'H'|'C'; 
@@ -13,6 +22,7 @@ export type Score = {
   _verification_debug?: any; // Verification debug information when requested
 };
 
+// Main scoring function
 export function scoreNews(item: {
   headline?: string; 
   description?: string; 
@@ -22,7 +32,7 @@ export function scoreNews(item: {
   debug?: boolean; // Add debug flag
 }): Score {
   // Check if Impact V3 is enabled
-  const impactMode = process.env.IMPACT_MODE;
+  const impactMode = getImpactMode();
   
   if (impactMode === 'v3') {
     return scoreNewsV3(item);
@@ -155,9 +165,9 @@ function scoreNewsV2(item: {
   let debugInfo: any; // Declare debugInfo here
   
   // Check for V2.2 first, then V2.1, then fallback to V1
-  const confidenceMode = process.env.CONFIDENCE_MODE;
+  const confidenceMode = getConfidenceMode();
   
-  if (confidenceMode === 'v2.2' || process.env.CONFIDENCE_V2 === 'true') {
+  if (confidenceMode === 'v2.2' || getConfidenceV2() === 'true') {
     try {
       // Extract domain from source name (fallback to source name if no domain)
       const sourceDomains = sources.map(source => {
@@ -208,7 +218,7 @@ function scoreNewsV2(item: {
       }
       
       // Use contrast mode based on feature flag (for V2.1 compatibility)
-      if (confidenceMode !== 'v2.2' && process.env.CONFIDENCE_V2_CONTRAST === '0') {
+      if (confidenceMode !== 'v2.2' && getConfidenceV2Contrast() === '0') {
         // Non-contrast mode: use raw score directly
         finalConfidence = v2Result.raw;
       } else {
@@ -220,7 +230,7 @@ function scoreNewsV2(item: {
       debugInfo = item.debug ? v2Result.debug : undefined;
       
       // Log comparison if enabled
-      if (process.env.CONFIDENCE_V2_COMPARE === '1') {
+      if (getConfidenceV2Compare() === '1') {
         console.log(JSON.stringify({
           type: 'confidence_compare',
           headline: item.headline?.substring(0, 50),
@@ -246,7 +256,7 @@ function scoreNewsV2(item: {
   let verification: VerificationStatus | undefined;
   let verificationDebug: any;
   
-  if (process.env.VERIFICATION_MODE === 'v1') {
+  if (getVerificationMode() === 'v1') {
     try {
       // Extract domain from source name (same logic as confidence)
       const sourceDomains = sources.map(source => {
@@ -290,7 +300,7 @@ function scoreNewsV2(item: {
       }
       
       // Log verification for metrics
-      if (process.env.VERIFICATION_MODE === 'v1') {
+      if (getVerificationMode() === 'v1') {
         console.log(JSON.stringify({
           type: 'verification_computed',
           headline: item.headline?.substring(0, 50),
@@ -392,9 +402,9 @@ function scoreNewsV3(item: {
   let debugInfo: any;
   
   // Check for V2.2 first, then V2.1, then fallback to V1
-  const confidenceMode = process.env.CONFIDENCE_MODE;
+  const confidenceMode = getConfidenceMode();
   
-  if (confidenceMode === 'v2.2' || process.env.CONFIDENCE_V2 === 'true') {
+  if (confidenceMode === 'v2.2' || getConfidenceV2() === 'true') {
     try {
       // Extract domain from source name (fallback to source name if no domain)
       const sourceDomains = sources.map(source => {
@@ -445,7 +455,7 @@ function scoreNewsV3(item: {
       }
       
       // Use contrast mode based on feature flag (for V2.1 compatibility)
-      if (confidenceMode !== 'v2.2' && process.env.CONFIDENCE_V2_CONTRAST === '0') {
+      if (confidenceMode !== 'v2.2' && getConfidenceV2Contrast() === '0') {
         // Non-contrast mode: use raw score directly
         finalConfidence = v2Result.raw;
       } else {
@@ -457,7 +467,7 @@ function scoreNewsV3(item: {
       debugInfo = item.debug ? v2Result.debug : undefined;
       
       // Log comparison if enabled
-      if (process.env.CONFIDENCE_V2_COMPARE === '1') {
+      if (getConfidenceV2Compare() === '1') {
         console.log(JSON.stringify({
           type: 'confidence_compare',
           headline: item.headline?.substring(0, 50),
@@ -498,7 +508,7 @@ function scoreNewsV3(item: {
   let verification: VerificationStatus | undefined;
   let verificationDebug: any;
   
-  if (process.env.VERIFICATION_MODE === 'v1') {
+  if (getVerificationMode() === 'v1') {
     try {
       // Extract domain from source name (same logic as confidence)
       const sourceDomains = sources.map(source => {
@@ -542,7 +552,7 @@ function scoreNewsV3(item: {
       }
       
       // Log verification for metrics
-      if (process.env.VERIFICATION_MODE === 'v1') {
+      if (getVerificationMode() === 'v1') {
         console.log(JSON.stringify({
           type: 'verification_computed',
           headline: item.headline?.substring(0, 50),
@@ -559,7 +569,7 @@ function scoreNewsV3(item: {
   }
 
   // Log comparison if enabled
-  if (process.env.IMPACT_V3_COMPARE === '1') {
+  if (getImpactV3Compare() === '1') {
     // For comparison, we need to compute V2 impact score
     let v2ImpactScore = 20;
     

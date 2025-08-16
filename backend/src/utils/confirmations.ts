@@ -1,9 +1,9 @@
 import { getSourceTier } from './sourceTiers';
 
 // Configuration constants
-export const CONFIRMATION_ALPHA = parseFloat(process.env.CONFIRMATION_ALPHA || '0.9');
-export const CONFIRMATION_SOLO_SAFETY = parseFloat(process.env.CONFIRMATION_SOLO_SAFETY || '0.20');
-export const CONFIRMATION_WINDOW_MIN = parseInt(process.env.CONFIRMATION_WINDOW_MIN || '60');
+export const getConfirmationAlpha = () => parseFloat(process.env.CONFIRMATION_ALPHA || '0.9');
+export const getConfirmationSoloSafety = () => parseFloat(process.env.CONFIRMATION_SOLO_SAFETY || '0.20');
+export const getConfirmationWindowMin = () => parseInt(process.env.CONFIRMATION_WINDOW_MIN || '60');
 
 // Source class definitions
 export type SourceClass = 'regulator' | 'corp_pr' | 'tier1' | 'tier2' | 'social_verified' | 'anonymous';
@@ -43,8 +43,11 @@ export function getSourceClass(domain: string): SourceClass {
  */
 export function countUniqueConfirmations(
   items: ConfirmationItem[],
-  windowMinutes: number = CONFIRMATION_WINDOW_MIN
+  windowMinutes?: number
 ): number {
+  const defaultWindow = getConfirmationWindowMin();
+  const actualWindow = windowMinutes ?? defaultWindow;
+  
   if (items.length === 0) return 0;
   if (items.length === 1) return 1;
 
@@ -90,8 +93,9 @@ export function hasCrossClassConfirmations(items: ConfirmationItem[]): boolean {
 /**
  * Compute confirmation function f_k = 1 - exp(-α * max(k-1, 0))
  */
-export function computeConfirmationFunction(k: number, alpha: number = CONFIRMATION_ALPHA): number {
-  return 1 - Math.exp(-alpha * Math.max(k - 1, 0));
+export function computeConfirmationFunction(k: number, alpha?: number): number {
+  const actualAlpha = alpha ?? getConfirmationAlpha();
+  return 1 - Math.exp(-actualAlpha * Math.max(k - 1, 0));
 }
 
 /**
@@ -108,7 +112,7 @@ export function scoreConfirmations(
   // Apply solo safety for high-tier, fresh content
   let adjusted_f_k = f_k;
   if (k === 1 && tier >= 0.8 && fresh >= 0.7) {
-    adjusted_f_k = Math.max(f_k, CONFIRMATION_SOLO_SAFETY);
+    adjusted_f_k = Math.max(f_k, getConfirmationSoloSafety());
   }
   
   // Check for diversity bonus

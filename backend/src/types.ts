@@ -18,6 +18,7 @@ export interface NewsItem {
   verification?: VerificationStatus; // New deterministic verification status
   primary_entity?: string;
   category?: string; // e.g., 'macro'
+  version?: string; // Version for filtering (v2 = new pipeline)
 }
 
 export interface Watchlist {

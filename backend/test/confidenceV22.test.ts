@@ -1,4 +1,4 @@
-import { scoreConfidenceV22, CONFIDENCE_RANGE_MIN, CONFIDENCE_RANGE_MAX, clamp } from '../src/utils/confidenceV2';
+import { scoreConfidenceV22, getConfidenceRangeMin, getConfidenceRangeMax, clamp } from '../src/utils/confidenceV2';
 
 describe('Confidence V2.2 Scoring', () => {
   const now = new Date();
@@ -211,8 +211,8 @@ describe('Confidence V2.2 Scoring', () => {
     const result = scoreConfidenceV22(inputs);
     
     // Check final score is within V2.2 range
-    expect(result.final).toBeGreaterThanOrEqual(CONFIDENCE_RANGE_MIN);
-    expect(result.final).toBeLessThanOrEqual(CONFIDENCE_RANGE_MAX);
+    expect(result.final).toBeGreaterThanOrEqual(getConfidenceRangeMin());
+    expect(result.final).toBeLessThanOrEqual(getConfidenceRangeMax());
   });
 
   test('Debug output includes all required fields for V2.2', () => {

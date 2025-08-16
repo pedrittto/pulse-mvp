@@ -1,7 +1,11 @@
-import { Router } from 'express';
+import express from 'express';
 import { getDb } from '../lib/firestore';
 
-const router = Router();
+const router = express.Router();
+
+// Environment getter functions
+const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
+const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
 
 /**
  * Compute confidence distribution metrics from an array of confidence scores
@@ -97,7 +101,7 @@ router.get('/metrics-lite', async (_req, res) => {
         confidenceMetrics = computeConfidenceMetrics(confidences);
 
         // Check for v2 comparison if feature flag is enabled
-        if (process.env.CONFIDENCE_V2_COMPARE === '1') {
+        if (getConfidenceV2Compare() === '1') {
           const v2Confidences = recentDocs.docs
             .map(doc => doc.data().confidence_v2_preview)
             .filter((c): c is number => typeof c === 'number' && !isNaN(c));
@@ -116,7 +120,7 @@ router.get('/metrics-lite', async (_req, res) => {
         }
 
         // Check for v2.2 metrics if enabled
-        if (process.env.CONFIDENCE_MODE === 'v2.2') {
+        if (getConfidenceMode() === 'v2.2') {
           const v22Confidences = recentDocs.docs
             .map(doc => doc.data().confidence)
             .filter((c): c is number => typeof c === 'number' && !isNaN(c));

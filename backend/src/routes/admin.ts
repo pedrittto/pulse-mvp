@@ -1,36 +1,13 @@
 import express from 'express';
-import { publishStub, enrichItem } from '../ingest/breakingIngest';
-import { getSourceLatencyStats } from '../ingest/breakingIngest';
+import { publishStub, enrichItem, getSourceLatencyStats, getCurrentSourceStats, resetSourceStats } from '../ingest/breakingIngest';
 import { breakingScheduler } from '../ingest/breakingScheduler';
+import { getDb } from '../lib/firestore';
+import { requireAdmin, requireAdminPurge } from '../middleware/admin';
 
 const router = express.Router();
 
-// Middleware to check admin token
-const requireAdminToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const expectedToken = process.env.ADMIN_QUICKPOST_TOKEN;
-  
-  if (!expectedToken) {
-    console.error('[admin] ADMIN_QUICKPOST_TOKEN not configured');
-    return res.status(500).json({
-      error: 'Admin token not configured',
-      code: 'ADMIN_TOKEN_MISSING'
-    });
-  }
-  
-  if (token !== expectedToken) {
-    console.warn('[admin] Invalid admin token attempt');
-    return res.status(401).json({
-      error: 'Invalid admin token',
-      code: 'INVALID_TOKEN'
-    });
-  }
-  
-  next();
-};
-
 // Quick post endpoint for manual breaking news insertion
-router.post('/quick-post', requireAdminToken, async (req, res) => {
+router.post('/quick-post', requireAdmin, async (req, res) => {
   try {
     const { title, source, url, tags } = req.body;
     
@@ -99,7 +76,7 @@ router.post('/quick-post', requireAdminToken, async (req, res) => {
 });
 
 // Latency metrics endpoint
-router.get('/latency', requireAdminToken, async (req, res) => {
+router.get('/latency', requireAdmin, async (req, res) => {
   try {
     const hours = parseInt(req.query.hours as string) || 24;
     
@@ -148,15 +125,35 @@ router.get('/latency', requireAdminToken, async (req, res) => {
   }
 });
 
-// Breaking scheduler status endpoint
-router.get('/breaking-status', requireAdminToken, async (req, res) => {
+// Get breaking news status
+router.get('/breaking-status', requireAdmin, async (_req, res) => {
   try {
-    const status = breakingScheduler.getStatus();
+    const stats = await getSourceLatencyStats('CNBC Breaking', 24);
+    const breakingStatus = breakingScheduler.getStatus();
+    const sourceStats = getCurrentSourceStats();
     
     res.json({
-      success: true,
       breaking_mode_enabled: process.env.BREAKING_MODE === '1',
-      scheduler: status
+      scheduler_running: breakingScheduler.getStatus().isRunning,
+      source_stats: stats,
+      sources: breakingStatus.sources.map(source => {
+        const stats = sourceStats[source.name] || { fetched: 0, new: 0, duplicate: 0, errors: 0 };
+        return {
+          name: source.name,
+          interval_ms: source.interval_ms,
+          nextPoll: 0, // Would need to track next poll time
+          inEventWindow: source.inEventWindow,
+          lastFetchAt: source.lastFetchAt,
+          lastOkAt: source.lastOkAt,
+          backoffState: source.backoffState,
+          currentStats: {
+            fetched: stats.fetched,
+            new: stats.new,
+            duplicate: stats.duplicate,
+            errors: stats.errors
+          }
+        };
+      })
     });
     
   } catch (error) {
@@ -169,7 +166,7 @@ router.get('/breaking-status', requireAdminToken, async (req, res) => {
 });
 
 // Control breaking scheduler
-router.post('/breaking-control', requireAdminToken, async (req, res) => {
+router.post('/breaking-control', requireAdmin, async (req, res) => {
   try {
     const { action } = req.body;
     
@@ -194,6 +191,143 @@ router.post('/breaking-control', requireAdminToken, async (req, res) => {
     
   } catch (error) {
     console.error('[admin][breaking-control] Error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// Purge feed data (requires ADMIN_ALLOW_PURGE)
+router.post('/purge-feed', requireAdminPurge, async (req, res) => {
+  try {
+    const { all, olderThanHours, confirm } = req.body;
+    
+    if (confirm !== 'PURGE') {
+      return res.status(400).json({
+        error: 'Must include confirm: "PURGE" to proceed',
+        code: 'CONFIRMATION_REQUIRED'
+      });
+    }
+    
+    const db = getDb();
+    const newsCollection = db.collection('news');
+    
+    let deleteCount = 0;
+    
+    if (all) {
+      // Delete all documents
+      const snapshot = await newsCollection.get();
+      const batch = db.batch();
+      
+      snapshot.docs.forEach((doc: any) => {
+        batch.delete(doc.ref);
+        deleteCount++;
+      });
+      
+      await batch.commit();
+      
+    } else if (olderThanHours && typeof olderThanHours === 'number') {
+      // Delete documents older than specified hours
+      const cutoffTime = new Date(Date.now() - olderThanHours * 60 * 60 * 1000);
+      
+      const snapshot = await newsCollection
+        .where('published_at', '<', cutoffTime.toISOString())
+        .get();
+      
+      const batch = db.batch();
+      
+      snapshot.docs.forEach((doc: any) => {
+        batch.delete(doc.ref);
+        deleteCount++;
+      });
+      
+      await batch.commit();
+      
+    } else {
+      return res.status(400).json({
+        error: 'Must specify either "all": true or "olderThanHours": number',
+        code: 'INVALID_PARAMETERS'
+      });
+    }
+    
+    res.json({
+      success: true,
+      deleted: deleteCount,
+      collections: ['news'],
+      message: `Deleted ${deleteCount} documents from news collection`
+    });
+    
+  } catch (error) {
+    console.error('[admin][purge-feed] Error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// Force re-ingest for specific sources
+router.post('/reingest', requireAdmin, async (req, res) => {
+  try {
+    const { sources, all, force } = req.body;
+    
+    if (!force) {
+      return res.status(400).json({
+        error: 'Must include force: true to proceed',
+        code: 'FORCE_REQUIRED'
+      });
+    }
+    
+    let sourceList: string[] = [];
+    
+    if (all) {
+      // Get all configured sources
+      const breakingStatus = breakingScheduler.getStatus();
+      sourceList = breakingStatus.sources.map(s => s.name);
+    } else if (sources && Array.isArray(sources)) {
+      sourceList = sources;
+    } else {
+      return res.status(400).json({
+        error: 'Must specify either "all": true or "sources": ["source1", "source2"]',
+        code: 'INVALID_PARAMETERS'
+      });
+    }
+    
+    // Force immediate fetch for specified sources
+    const result = await breakingScheduler.forceFetch(sourceList);
+    
+    res.json({
+      success: true,
+      ...result,
+      message: `Scheduled immediate fetch for ${result.scheduled.length} sources`
+    });
+    
+  } catch (error) {
+    console.error('[admin][reingest] Error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      code: 'INTERNAL_ERROR'
+    });
+  }
+});
+
+// Reset breaking state (in-memory only)
+router.post('/reset-breaking-state', requireAdmin, async (req, res) => {
+  try {
+    // Reset scheduler state
+    breakingScheduler.resetState();
+    
+    // Reset source statistics
+    resetSourceStats();
+    
+    res.json({
+      success: true,
+      message: 'Reset in-memory breaking state and source statistics'
+    });
+    
+  } catch (error) {
+    console.error('[admin][reset-breaking-state] Error:', error);
     res.status(500).json({
       error: 'Internal server error',
       code: 'INTERNAL_ERROR'
