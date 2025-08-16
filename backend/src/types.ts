@@ -1,5 +1,7 @@
 export type Impact = "L" | "M" | "H" | "C";
 
+export type VerificationStatus = "verified" | "confirmed" | "reported" | "unconfirmed";
+
 export interface NewsItem {
   id: string;
   thread_id: string;
@@ -12,7 +14,8 @@ export interface NewsItem {
   arrival_at?: string; // ISO string - alias of ingested_at for API compatibility
   impact: Impact;
   impact_score: number; // 0-100
-  confidence: number; // 0-100
+  confidence: number; // 0-100 (kept for backward compatibility)
+  verification?: VerificationStatus; // New deterministic verification status
   primary_entity?: string;
   category?: string; // e.g., 'macro'
 }

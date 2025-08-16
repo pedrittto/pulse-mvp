@@ -1,13 +1,16 @@
 import { scoreConfidenceV2, scoreConfidenceV22, CONF_MIN, CONF_MAX, clamp } from './confidenceV2';
 import { scoreImpactV3, logImpactComparison, ImpactV3Result } from './impactV3';
+import { computeVerification, computeVerificationWithDebug, VerificationInputs, VerificationStatus } from './verification';
 
 export type Score = { 
   impact_score: number; 
   impact: 'L'|'M'|'H'|'C'; 
-  confidence: number; 
+  confidence: number; // Kept for backward compatibility
+  verification?: VerificationStatus; // New verification status
   tags?: string[];
   _confidence_debug?: any; // Debug information when requested
   _impact_debug?: ImpactV3Result; // Impact V3 debug information when requested
+  _verification_debug?: any; // Verification debug information when requested
 };
 
 export function scoreNews(item: {
@@ -239,6 +242,70 @@ function scoreNewsV2(item: {
     debugInfo = undefined; // Ensure debugInfo is undefined for v1
   }
 
+  // Compute verification status if enabled
+  let verification: VerificationStatus | undefined;
+  let verificationDebug: any;
+  
+  if (process.env.VERIFICATION_MODE === 'v1') {
+    try {
+      // Extract domain from source name (same logic as confidence)
+      const sourceDomains = sources.map(source => {
+        const sourceMappings: { [key: string]: string } = {
+          'Bloomberg Markets': 'bloomberg.com',
+          'Bloomberg': 'bloomberg.com',
+          'Financial Times': 'ft.com',
+          'FT': 'ft.com',
+          'Reuters': 'reuters.com',
+          'CNBC': 'cnbc.com',
+          'MarketWatch': 'marketwatch.com',
+          'TechCrunch': 'techcrunch.com',
+          'The Verge': 'theverge.com',
+          'Ars Technica': 'arstechnica.com',
+          'BBC Business': 'bbc.com',
+          'AP Business': 'apnews.com'
+        };
+        
+        if (sourceMappings[source]) {
+          return { domain: sourceMappings[source], isPrimary: false };
+        }
+        
+        const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
+        return { domain, isPrimary: false };
+      });
+      
+      const verificationInputs: VerificationInputs = {
+        sources: sourceDomains,
+        headline: item.headline || '',
+        body: item.description || '',
+        published_at: published_at || new Date().toISOString()
+      };
+      
+      if (item.debug) {
+        const debugResult = computeVerificationWithDebug(verificationInputs);
+        verification = debugResult.status;
+        verificationDebug = debugResult;
+      } else {
+        const result = computeVerification(verificationInputs);
+        verification = result.status;
+      }
+      
+      // Log verification for metrics
+      if (process.env.VERIFICATION_MODE === 'v1') {
+        console.log(JSON.stringify({
+          type: 'verification_computed',
+          headline: item.headline?.substring(0, 50),
+          verification,
+          confidence: Math.round(finalConfidence),
+          sources: sources
+        }));
+      }
+    } catch (error) {
+      console.error('Error computing verification, skipping:', error);
+      verification = undefined;
+      verificationDebug = undefined;
+    }
+  }
+
   // Label
   const impact: 'L'|'M'|'H' = impact_score >= 70 ? 'H' : impact_score >= 45 ? 'M' : 'L';
 
@@ -249,8 +316,10 @@ function scoreNewsV2(item: {
     impact_score: Math.round(impact_score),
     impact,
     confidence: Math.round(clampedConfidence),
+    ...(verification && { verification }),
     tags: tags.length > 0 ? tags : undefined,
-    ...(debugInfo && { _confidence_debug: debugInfo })
+    ...(debugInfo && { _confidence_debug: debugInfo }),
+    ...(verificationDebug && { _verification_debug: verificationDebug })
   };
 }
 
@@ -425,6 +494,70 @@ function scoreNewsV3(item: {
 
   const impactV3Result = scoreImpactV3(impactV3Input);
 
+  // Compute verification status if enabled (same logic as V2)
+  let verification: VerificationStatus | undefined;
+  let verificationDebug: any;
+  
+  if (process.env.VERIFICATION_MODE === 'v1') {
+    try {
+      // Extract domain from source name (same logic as confidence)
+      const sourceDomains = sources.map(source => {
+        const sourceMappings: { [key: string]: string } = {
+          'Bloomberg Markets': 'bloomberg.com',
+          'Bloomberg': 'bloomberg.com',
+          'Financial Times': 'ft.com',
+          'FT': 'ft.com',
+          'Reuters': 'reuters.com',
+          'CNBC': 'cnbc.com',
+          'MarketWatch': 'marketwatch.com',
+          'TechCrunch': 'techcrunch.com',
+          'The Verge': 'theverge.com',
+          'Ars Technica': 'arstechnica.com',
+          'BBC Business': 'bbc.com',
+          'AP Business': 'apnews.com'
+        };
+        
+        if (sourceMappings[source]) {
+          return { domain: sourceMappings[source], isPrimary: false };
+        }
+        
+        const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
+        return { domain, isPrimary: false };
+      });
+      
+      const verificationInputs: VerificationInputs = {
+        sources: sourceDomains,
+        headline: item.headline || '',
+        body: item.description || '',
+        published_at: published_at || new Date().toISOString()
+      };
+      
+      if (item.debug) {
+        const debugResult = computeVerificationWithDebug(verificationInputs);
+        verification = debugResult.status;
+        verificationDebug = debugResult;
+      } else {
+        const result = computeVerification(verificationInputs);
+        verification = result.status;
+      }
+      
+      // Log verification for metrics
+      if (process.env.VERIFICATION_MODE === 'v1') {
+        console.log(JSON.stringify({
+          type: 'verification_computed',
+          headline: item.headline?.substring(0, 50),
+          verification,
+          confidence: Math.round(clampedConfidence),
+          sources: sources
+        }));
+      }
+    } catch (error) {
+      console.error('Error computing verification, skipping:', error);
+      verification = undefined;
+      verificationDebug = undefined;
+    }
+  }
+
   // Log comparison if enabled
   if (process.env.IMPACT_V3_COMPARE === '1') {
     // For comparison, we need to compute V2 impact score
@@ -508,8 +641,10 @@ function scoreNewsV3(item: {
     impact_score: Math.round(impactV3Result.raw * 100), // Convert 0-1 to 0-100 for API compatibility
     impact: impactV3Result.category,
     confidence: Math.round(clampedConfidence),
+    ...(verification && { verification }),
     tags: tags.length > 0 ? tags : undefined,
     ...(debugInfo && { _confidence_debug: debugInfo }),
+    ...(verificationDebug && { _verification_debug: verificationDebug }),
     ...(item.debug && { _impact_debug: impactV3Result })
   };
 }

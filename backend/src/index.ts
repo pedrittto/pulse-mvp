@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 // import { config } from './config/env';
 import apiRoutes from './api';
 import { startRSSIngestion } from './cron';
+import { breakingScheduler } from './ingest/breakingScheduler';
 
 const app = express();
 const port = Number(process.env.PORT) || 4000;
@@ -101,5 +102,13 @@ if (require.main === module) {
     
     // Start RSS ingestion cron job
     startRSSIngestion();
+    
+    // Start breaking news scheduler if enabled
+    if (process.env.BREAKING_MODE === '1') {
+      console.log('[breaking] Starting breaking news scheduler');
+      breakingScheduler.start();
+    } else {
+      console.log('[breaking] Breaking mode disabled (set BREAKING_MODE=1 to enable)');
+    }
   });
 }

@@ -5,6 +5,7 @@ import { getNewsItems } from './storage';
 import { getDb } from './lib/firestore';
 import { ingestRSSFeeds } from './ingest/rss';
 import { metrics } from './routes/metrics';
+import { adminRoutes } from './routes/admin';
 import { scoreNews } from './utils/scoring';
 
 // Type for watchlist data structure
@@ -640,13 +641,14 @@ router.get('/feed', async (req, res) => {
     const debugConfidence = debug === 'conf';
     const debugImpact = debug === 'impact';
     const debugTime = debug === 'time';
+    const debugVerification = debug === 'verif';
     
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
     let items = await getNewsItems(newsLimit);
     
     // Apply debug if requested
-    if (debugConfidence || debugImpact) {
+    if (debugConfidence || debugImpact || debugVerification) {
       items = items.map(item => {
         // Re-score with debug information
         const scoredItem = scoreNews({
@@ -669,6 +671,10 @@ router.get('/feed', async (req, res) => {
         
         if (debugImpact) {
           result.impact_debug = scoredItem._impact_debug;
+        }
+        
+        if (debugVerification) {
+          result.verification_debug = scoredItem._verification_debug;
         }
         
         return result;
@@ -897,5 +903,8 @@ router.post('/watchlist', watchlistLimiter, async (req, res) => {
 
 // Register metrics routes
 router.use(metrics);
+
+// Register admin routes
+router.use('/admin', adminRoutes);
 
 export default router;

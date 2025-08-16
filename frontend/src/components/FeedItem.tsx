@@ -1,6 +1,7 @@
 import { NewsItem } from '@/types'
 import ImpactBadge from './ImpactBadge'
 import ConfidenceBadge from './ConfidenceBadge'
+import VerificationBadge from './VerificationBadge'
 import HelpIcon from './HelpIcon'
 import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
@@ -44,6 +45,9 @@ function FeedItem({ item }: FeedItemProps) {
     }
   }
 
+  // Check if verification mode is enabled (frontend environment variable or item has verification field)
+  const isVerificationMode = process.env.NEXT_PUBLIC_VERIFICATION_MODE === 'v1' || item.verification;
+
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
       <div className="flex items-start justify-between mb-2">
@@ -52,7 +56,11 @@ function FeedItem({ item }: FeedItemProps) {
             {timeText}
           </span>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <ConfidenceBadge confidence={item.confidence} />
+            {isVerificationMode && item.verification ? (
+              <VerificationBadge verification={item.verification} />
+            ) : (
+              <ConfidenceBadge confidence={item.confidence} />
+            )}
             <ImpactBadge impact={item.impact} />
             <HelpIcon />
           </div>
