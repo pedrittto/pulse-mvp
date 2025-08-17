@@ -13,6 +13,8 @@ export interface VerificationV1 {
   };
 }
 
+export type ConfidenceState = 'unconfirmed' | 'reported' | 'corroborated' | 'verified' | 'confirmed';
+
 export interface ImpactV3 {
   score: number; // 0-100
   category: Impact;
@@ -44,10 +46,18 @@ export interface NewsItem {
   // Verification V1 structure
   verification?: VerificationV1;
   
+  // New confidence state (categorical)
+  confidence_state?: ConfidenceState;
+  
   // Legacy fields (kept for backward compatibility)
   impact_score?: number; // 0-100
-  confidence?: number; // 0-100
   verification_legacy?: VerificationStatus; // Old verification field
+  
+  // Normalized fields from API route (for consistent UI consumption)
+  impactCategory?: string | null; // Normalized impact category (L/M/H/C)
+  impactScore?: number | null;   // Normalized impact score (0-100)
+  verificationState?: string | null; // Normalized verification state
+  confidenceState?: ConfidenceState | null; // Normalized confidence state
   
   primary_entity?: string;
   image_url?: string;
@@ -62,7 +72,7 @@ export interface Watchlist {
   user_id: string;
   tickers: string[];
   keywords: string[];
-  min_confidence: number;
+  min_confidence: number; // Legacy; consider migrating to confidence_state filters
   min_impact: Impact;
   quiet_hours?: {
     start: string;

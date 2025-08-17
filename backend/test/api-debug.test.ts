@@ -13,7 +13,8 @@ describe('API Debug Endpoint', () => {
   
   beforeEach(() => {
     process.env = { ...originalEnv };
-    process.env.CONFIDENCE_MODE = 'v2.2';
+    delete process.env.CONFIDENCE_MODE;
+    process.env.FIREBASE_PROJECT_ID = 'test-project';
   });
   
   afterEach(() => {

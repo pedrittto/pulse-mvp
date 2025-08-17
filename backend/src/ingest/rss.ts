@@ -52,12 +52,7 @@ const shouldRejectArticle = (title: string, description: string, _category?: str
     }
   }
   
-  // Reject if headline is too long without financial content
-  const hasFinancialContent = /\b(\d+%|\$\d+|[A-Z]{2,4}\b|fed|ecb|boe|treasury|sec)\b/i.test(combinedText);
-  const wordCount = title.split(/\s+/).length;
-  if (wordCount > 15 && !hasFinancialContent) {
-    return true;
-  }
+  // Relaxed: Do not reject purely on length to increase throughput
   
   // Reject if title starts with common non-actionable patterns
   const titleLower = title.toLowerCase();
@@ -162,7 +157,7 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
       drivers: []
     },
     impact_score: score.impact_score,
-    confidence: score.confidence,
+    confidence_state: score.confidence_state,
     primary_entity: primaryEntity || '',
     category: score.tags?.includes('Macro') ? 'macro' : undefined
   };
@@ -209,6 +204,7 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
         console.log(`[filter] Rejected: ${title.substring(0, 60)}...`);
         return false;
       }
+      console.log(`[filter] Accepted: ${title.substring(0, 80)}...`);
       return true;
     });
 

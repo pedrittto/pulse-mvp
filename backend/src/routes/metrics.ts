@@ -3,54 +3,19 @@ import { getDb } from '../lib/firestore';
 
 const router = express.Router();
 
-// Environment getter functions
-const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
-const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
-
-/**
- * Compute confidence distribution metrics from an array of confidence scores
- */
-function computeConfidenceMetrics(confidences: number[]) {
-  if (confidences.length === 0) {
-    return {
-      confidence_avg: 0,
-      confidence_lt40: 0,
-      confidence_40_59: 0,
-      confidence_60_79: 0,
-      confidence_gte80: 0,
-      confidence_histogram: {
-        "20-29": 0, "30-39": 0, "40-49": 0, "50-59": 0, "60-69": 0,
-        "70-79": 0, "80-89": 0, "90-95": 0
-      }
-    };
+// For categorical confidence_state metrics
+function computeConfidenceStateMetrics(states: string[]) {
+  const counts: Record<string, number> = {
+    unconfirmed: 0,
+    reported: 0,
+    corroborated: 0,
+    verified: 0,
+    confirmed: 0
+  };
+  for (const s of states) {
+    if (counts[s] !== undefined) counts[s]++;
   }
-
-  const avg = confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
-  const lt40 = confidences.filter(c => c < 40).length;
-  const range40_59 = confidences.filter(c => c >= 40 && c < 60).length;
-  const range60_79 = confidences.filter(c => c >= 60 && c < 80).length;
-  const gte80 = confidences.filter(c => c >= 80).length;
-
-  // Compute histogram
-  const histogram = {
-    "20-29": confidences.filter(c => c >= 20 && c < 30).length,
-    "30-39": confidences.filter(c => c >= 30 && c < 40).length,
-    "40-49": confidences.filter(c => c >= 40 && c < 50).length,
-    "50-59": confidences.filter(c => c >= 50 && c < 60).length,
-    "60-69": confidences.filter(c => c >= 60 && c < 70).length,
-    "70-79": confidences.filter(c => c >= 70 && c < 80).length,
-    "80-89": confidences.filter(c => c >= 80 && c < 90).length,
-    "90-95": confidences.filter(c => c >= 90 && c <= 95).length
-  };
-
-  return {
-    confidence_avg: Math.round(avg * 10) / 10, // Round to 1 decimal
-    confidence_lt40: lt40,
-    confidence_40_59: range40_59,
-    confidence_60_79: range60_79,
-    confidence_gte80: gte80,
-    confidence_histogram: histogram
-  };
+  return counts;
 }
 
 /**
@@ -82,10 +47,8 @@ router.get('/metrics-lite', async (_req, res) => {
       }
     }
 
-    // Get confidence metrics from recent documents (sample last 500 for performance)
-    let confidenceMetrics = null;
-    let confidenceV2Metrics = null;
-    let confidenceV22Metrics = null;
+    // Get confidence_state metrics from recent documents (sample last 500 for performance)
+    let confidenceStateMetrics = null;
     
     try {
       const recentDocs = await db.collection('news')
@@ -94,52 +57,13 @@ router.get('/metrics-lite', async (_req, res) => {
         .get();
 
       if (!recentDocs.empty) {
-        const confidences = recentDocs.docs
-          .map(doc => doc.data().confidence)
-          .filter((c): c is number => typeof c === 'number' && !isNaN(c));
-
-        confidenceMetrics = computeConfidenceMetrics(confidences);
-
-        // Check for v2 comparison if feature flag is enabled
-        if (getConfidenceV2Compare() === '1') {
-          const v2Confidences = recentDocs.docs
-            .map(doc => doc.data().confidence_v2_preview)
-            .filter((c): c is number => typeof c === 'number' && !isNaN(c));
-
-          if (v2Confidences.length > 0) {
-            const v2Metrics = computeConfidenceMetrics(v2Confidences);
-            confidenceV2Metrics = {
-              confidence_avg_v2: v2Metrics.confidence_avg,
-              confidence_lt40_v2: v2Metrics.confidence_lt40,
-              confidence_40_59_v2: v2Metrics.confidence_40_59,
-              confidence_60_79_v2: v2Metrics.confidence_60_79,
-              confidence_gte80_v2: v2Metrics.confidence_gte80,
-              confidence_histogram_v2: v2Metrics.confidence_histogram
-            };
-          }
-        }
-
-        // Check for v2.2 metrics if enabled
-        if (getConfidenceMode() === 'v2.2') {
-          const v22Confidences = recentDocs.docs
-            .map(doc => doc.data().confidence)
-            .filter((c): c is number => typeof c === 'number' && !isNaN(c));
-
-          if (v22Confidences.length > 0) {
-            const v22Metrics = computeConfidenceMetrics(v22Confidences);
-            confidenceV22Metrics = {
-              confidence_avg_v22: v22Metrics.confidence_avg,
-              confidence_lt40_v22: v22Metrics.confidence_lt40,
-              confidence_40_59_v22: v22Metrics.confidence_40_59,
-              confidence_60_79_v22: v22Metrics.confidence_60_79,
-              confidence_gte80_v22: v22Metrics.confidence_gte80,
-              confidence_histogram_v22: v22Metrics.confidence_histogram
-            };
-          }
-        }
+        const states = recentDocs.docs
+          .map(doc => doc.data().confidence_state)
+          .filter((s): s is string => typeof s === 'string' && s.length > 0);
+        confidenceStateMetrics = computeConfidenceStateMetrics(states);
       }
     } catch (error) {
-      console.error('[metrics] Failed to compute confidence metrics:', error);
+      console.error('[metrics] Failed to compute confidence_state metrics:', error);
       // Continue without confidence metrics
     }
     
@@ -149,9 +73,7 @@ router.get('/metrics-lite', async (_req, res) => {
       counts: ingestStatus?.counts || { fetched: 0, added: 0, skipped: 0, errors: 0 },
       feed_count: feedCount,
       now: new Date().toISOString(),
-      ...(confidenceMetrics && { confidence: confidenceMetrics }),
-      ...(confidenceV2Metrics && { confidence_v2: confidenceV2Metrics }),
-      ...(confidenceV22Metrics && { confidence_v22: confidenceV22Metrics })
+      ...(confidenceStateMetrics && { confidence_state: confidenceStateMetrics })
     };
     
     res.json(response);

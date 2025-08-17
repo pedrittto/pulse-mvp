@@ -1,35 +1,21 @@
-#!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "🔒 Running security checks..."
+# Only scan meaningful files (ignore lockfiles, markdown, docs, husky, env examples)
+DIFF_FILES=$(git diff --cached --name-only | grep -vE '(^|/)(package-lock\.json|.*\.lock|\.husky/|docs/|README\.md|CHANGELOG\.md|LICENSE|.*\.md|\.env\.example$)')
 
-# Collect only relevant files; exclude tests, docs, examples, env.example, and the hook itself
-DIFF_CONTENT="$(git diff --cached -- . \
-  ':(exclude)test/**' \
-  ':(exclude)tests/**' \
-  ':(exclude)__tests__/**' \
-  ':(exclude)docs/**' \
-  ':(exclude)**/*.md' \
-  ':(exclude)**/*.example' \
-  ':(exclude)**/env.example' \
-  ':(exclude)SECURITY_AUDIT_REPORT.md' \
-  ':(exclude).husky/**')"
+# Nothing to scan? pass
+[ -z "${DIFF_FILES}" ] && exit 0
 
-# Regex for real secrets
-SECRET_REGEX='(sk-|pk_|AIza|1//|ya29|eyJ|-----BEGIN|-----END)'
+# Stricter patterns: avoid "sk-" inside words like "microtask", require length
+SECRET_REGEX='(\bsk-[A-Za-z0-9_-]{10,}|pk_[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z\-_]{10,}|ya29\.[0-9A-Za-z\-_\.]{10,}|eyJ[a-zA-Z0-9._-]{10,}|-----BEGIN|-----END)'
 
-# Whitelist for safe placeholders and test values
-WHITELIST_REGEX='(<PLACEHOLDER>|test-token|test-admin-token|your-admin-token-here|BEGIN KEY \(placeholder\)|END KEY \(placeholder\))'
-
-# Scan staged diff
-echo "$DIFF_CONTENT" \
-  | grep -E "$SECRET_REGEX" \
-  | grep -Ev "$WHITELIST_REGEX" >/dev/null
-
-if [ $? -eq 0 ]; then
-  echo "❌ ERROR: Potential secrets detected in staged changes (not placeholders)."
-  echo "    Fix or replace with safe placeholders before committing."
+# Scan only the selected files; print exact hits if found
+if git diff --cached -- ${DIFF_FILES} | grep -nE "${SECRET_REGEX}" > /tmp/secret_hits.txt; then
+  echo "❌ Potential secret detected. Hits:"
+  sed 's/^/  /' /tmp/secret_hits.txt
   exit 1
 fi
 
 echo "✅ Security checks passed."
+exit 0

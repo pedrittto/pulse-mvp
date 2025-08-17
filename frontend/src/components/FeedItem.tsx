@@ -1,7 +1,6 @@
 import { NewsItem } from '@/types'
 import ImpactBadge from './ImpactBadge'
 import ConfidenceBadge from './ConfidenceBadge'
-import VerificationBadge from './VerificationBadge'
 import HelpIcon from './HelpIcon'
 import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
@@ -10,7 +9,13 @@ import { memo, useMemo } from 'react'
 import { useTime } from '@/lib/timeContext'
 
 interface FeedItemProps {
-  item: NewsItem
+  item: NewsItem & {
+    // Normalized fields from API route
+    impactCategory?: string | null;
+    impactScore?: number | null;
+    verificationState?: string | null;
+    confidenceState?: 'unconfirmed' | 'reported' | 'corroborated' | 'verified' | 'confirmed' | null;
+  }
 }
 
 function FeedItem({ item }: FeedItemProps) {
@@ -38,8 +43,7 @@ function FeedItem({ item }: FeedItemProps) {
     }
   }
 
-  // Check if verification mode is enabled
-  const isVerificationMode = config.verificationMode === 'v1' || item.verification;
+  // Verification badge not used for confidence display anymore
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
@@ -54,16 +58,26 @@ function FeedItem({ item }: FeedItemProps) {
             </span>
           )}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {isVerificationMode && item.verification ? (
-              <VerificationBadge verification={item.verification} />
-            ) : (
-              <ConfidenceBadge confidence={item.confidence || 0} />
-            )}
-            {item.impact ? (
-              <ImpactBadge impact={item.impact} />
+            {/* Show confidence_state badge */}
+            {item.confidenceState ? (
+              <ConfidenceBadge confidence={item.confidenceState as any} />
             ) : (
               <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700">
-                Impact {item.impact_score || 0}
+                Confidence Unknown
+              </span>
+            )}
+            
+            {/* Show impact badge if category is available */}
+            {item.impactCategory ? (
+              <ImpactBadge 
+                impact={{ 
+                  category: item.impactCategory as any, 
+                  score: item.impactScore || 0 
+                }} 
+              />
+            ) : (
+              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700">
+                Impact Unknown
               </span>
             )}
             <HelpIcon />

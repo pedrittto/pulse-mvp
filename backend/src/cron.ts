@@ -7,7 +7,7 @@ let rssCronTask: cron.ScheduledTask | null = null;
 
 // Schedule RSS ingestion
 export const startRSSIngestion = (): void => {
-  const schedule = getConfig().cronSchedule;
+  const schedule = getConfig().cronSchedule || '*/1 * * * *';
   
   console.log(`Starting RSS ingestion cron job with schedule: ${schedule}`);
   

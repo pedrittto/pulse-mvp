@@ -31,7 +31,7 @@ export default function HelpIcon({ className = '' }: HelpIconProps) {
             <strong>Impact</strong> = estimated market impact
           </div>
           <div>
-            <strong>Confidence</strong> = heuristic certainty (20–95)
+            <strong>Confidence</strong> = state (Unconfirmed, Reported, Corroborated, Verified, Confirmed)
           </div>
           {/* Arrow */}
           <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>

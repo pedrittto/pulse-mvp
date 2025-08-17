@@ -19,7 +19,6 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
   const [formData, setFormData] = useState({
     tickers: '',
     keywords: '',
-    min_confidence: 50,
     min_impact: 'M' as Impact,
   })
 
@@ -50,7 +49,6 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
         setFormData({
           tickers: watchlist.tickers.join(', '),
           keywords: watchlist.keywords.join(', '),
-          min_confidence: watchlist.min_confidence,
           min_impact: watchlist.min_impact,
         })
       } else if (response.status === 404) {
@@ -58,7 +56,6 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
         setFormData({
           tickers: '',
           keywords: '',
-          min_confidence: 50,
           min_impact: 'M',
         })
       } else {
@@ -90,7 +87,6 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
         user_id: 'demo',
         tickers,
         keywords,
-        min_confidence: formData.min_confidence,
         min_impact: formData.min_impact,
       }
 
@@ -188,19 +184,7 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Min Confidence ({formData.min_confidence}%)
-                  </label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={formData.min_confidence}
-                    onChange={(e) => setFormData(prev => ({ ...prev, min_confidence: parseInt(e.target.value) }))}
-                    className="w-full"
-                  />
-                </div>
+                {/* Confidence threshold removed (numeric confidence deprecated) */}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">

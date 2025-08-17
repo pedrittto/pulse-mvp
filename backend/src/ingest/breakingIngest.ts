@@ -93,7 +93,7 @@ export interface BreakingStub {
   url: string;
   category: string;
   impact: string;
-  confidence: number | null;
+  confidence_state?: 'unconfirmed' | 'reported' | 'corroborated' | 'verified' | 'confirmed';
   verification?: string;
   why: string;
   tickers: string[];
@@ -138,7 +138,7 @@ export const publishStub = async (item: {
       url: item.url,
       category: '',
       impact: '',
-      confidence: null,
+      confidence_state: undefined,
       verification: 'reported', // Default verification status
       why: '',
       tickers: [],
@@ -283,7 +283,7 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
       
       // Legacy fields (for backward compatibility)
       impact_score: score.impact_score,
-      confidence: score.confidence,
+      confidence_state: score.confidence_state,
       verification_legacy: verificationLegacy,
       
       primary_entity: primaryEntity || '',
@@ -297,7 +297,7 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
     
     log('info', `Enriched: ${id}`, {
       impact: score.impact,
-      confidence: score.confidence,
+      confidence_state: score.confidence_state,
       primary_entity: primaryEntity
     });
     

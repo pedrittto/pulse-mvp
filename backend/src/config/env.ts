@@ -21,7 +21,6 @@ const loadConfig = () => {
     breakingLogLevel: process.env.BREAKING_LOG_LEVEL || 'info',
     verificationMode: process.env.VERIFICATION_MODE || 'v1',
     impactMode: process.env.IMPACT_MODE || 'v3',
-    confidenceMode: process.env.CONFIDENCE_MODE,
     
     // Breaking sources and event windows JSON
     breakingSourcesJson: process.env.BREAKING_SOURCES_JSON,

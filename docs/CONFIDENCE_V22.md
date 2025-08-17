@@ -1,9 +1,9 @@
-# Confidence V2.2 Specification
+## Confidence V2.2 — Deprecated
 
 ## Overview
-Confidence V2.2 is an enhanced scoring system that improves upon V2.1 with better cross-confirmation logic, content classification, and market reaction handling.
+This numeric system has been replaced by categorical `confidence_state` with values: unconfirmed, reported, corroborated, verified, confirmed. Do not use numeric confidence.
 
-## Environment Variables
+### (Deprecated) Environment Variables
 
 ### Core Configuration
 - `CONFIDENCE_MODE=v2.2` - Enable V2.2 scoring (defaults to v2.1 if not set)
@@ -19,7 +19,7 @@ Confidence V2.2 is an enhanced scoring system that improves upon V2.1 with bette
 ### Content Fit Settings
 - `CONTENT_TREND_BONUS=0.10` - Bonus for content aligned with active trends
 
-## Algorithm
+### (Deprecated) Algorithm
 
 ### Pillar Weights (sum = 1.0)
 - P1 (Source + Freshness): 0.32

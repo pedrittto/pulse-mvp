@@ -162,7 +162,7 @@ describe('Impact V2 Legacy Scoring', () => {
       expect(score1.impact_score).toBe(score2.impact_score);
     });
 
-    test('confidence changes should not affect impact', () => {
+    test('confidence text changes should not affect impact', () => {
       const baseInputs = {
         headline: 'Test headline',
         description: 'Test description',
@@ -181,7 +181,6 @@ describe('Impact V2 Legacy Scoring', () => {
       
       expect(score1.impact).toBe(score2.impact);
       expect(score1.impact_score).toBe(score2.impact_score);
-      expect(score1.confidence).not.toBe(score2.confidence);
     });
   });
 

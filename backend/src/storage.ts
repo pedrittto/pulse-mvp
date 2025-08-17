@@ -81,7 +81,7 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         tickers: Array.isArray(sanitizedItem.tickers) ? sanitizedItem.tickers : [],
         impact: sanitizedItem.impact || 'L',
         impact_score: typeof sanitizedItem.impact_score === 'number' ? sanitizedItem.impact_score : 20,
-        confidence: typeof sanitizedItem.confidence === 'number' ? sanitizedItem.confidence : 50,
+        confidence_state: sanitizedItem.confidence_state,
         category: sanitizedItem.category || '',
         ingested_at: sanitizedItem.ingested_at ?? new Date().toISOString(),
         // Set arrival_at only on first insert - never overwrite existing
@@ -98,8 +98,7 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         headline: safeItem.headline, 
         published_at: safeItem.published_at,
         primary_entity: safeItem.primary_entity,
-        impact: safeItem.impact,
-        confidence: safeItem.confidence
+        impact: safeItem.impact
       });
       added++;
     } catch (error) {
@@ -139,7 +138,7 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
       };
 
       // Backfill scoring if missing
-      if (!cleanedItem.impact_score || !cleanedItem.confidence || !cleanedItem.impact || cleanedItem.impact.category === 'L') {
+      if (!cleanedItem.impact_score || !cleanedItem.confidence_state || !cleanedItem.impact || cleanedItem.impact.category === 'L') {
         const score = scoreNews({
           headline: cleanedItem.headline,
           description: cleanedItem.why,
@@ -154,7 +153,7 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
           drivers: []
         };
         cleanedItem.impact_score = score.impact_score;
-        cleanedItem.confidence = score.confidence;
+        cleanedItem.confidence_state = score.confidence_state;
         if (score.tags?.includes('Macro') && !cleanedItem.category) {
           cleanedItem.category = 'macro';
         }

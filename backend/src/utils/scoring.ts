@@ -1,23 +1,19 @@
-import { scoreConfidenceV2, scoreConfidenceV22, CONF_MIN, CONF_MAX, clamp } from './confidenceV2';
 import { scoreImpactV3, logImpactComparison, ImpactV3Result } from './impactV3';
 import { computeVerification, computeVerificationWithDebug, VerificationInputs, VerificationStatus } from './verification';
+import { computeConfidenceState } from './confidenceState';
 
 // Environment getter functions
 const getImpactMode = () => process.env.IMPACT_MODE;
-const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
-const getConfidenceV2 = () => process.env.CONFIDENCE_V2;
-const getConfidenceV2Contrast = () => process.env.CONFIDENCE_V2_CONTRAST;
-const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
 const getVerificationMode = () => process.env.VERIFICATION_MODE;
 const getImpactV3Compare = () => process.env.IMPACT_V3_COMPARE;
 
 export type Score = { 
   impact_score: number; 
   impact: 'L'|'M'|'H'|'C'; 
-  confidence: number; // Kept for backward compatibility
+  confidence_state: 'unconfirmed' | 'reported' | 'corroborated' | 'verified' | 'confirmed';
   verification?: VerificationStatus; // New verification status
+  verification_result?: any; // Full verification result object
   tags?: string[];
-  _confidence_debug?: any; // Debug information when requested
   _impact_debug?: ImpactV3Result; // Impact V3 debug information when requested
   _verification_debug?: any; // Verification debug information when requested
 };
@@ -53,7 +49,6 @@ function scoreNewsV2(item: {
 }): Score {
   // Start with base values
   let impact_score = 20;
-  let confidence = 50;
   const tags: string[] = [];
 
   const headline = (item.headline || '').toLowerCase();
@@ -112,7 +107,7 @@ function scoreNewsV2(item: {
     }
   }
 
-  // Macro keywords
+  // Macro keywords (affects impact only)
   const MACRO_KEYWORDS = [
     'fed', 'interest rate', 'cpi', 'ppi', 'jobs report', 'opec', 
     'oil cut', 'war', 'geopolitics', 'tariff', 'sanctions', 
@@ -122,7 +117,6 @@ function scoreNewsV2(item: {
   for (const keyword of MACRO_KEYWORDS) {
     if (text.includes(keyword)) {
       impact_score += 12;
-      confidence += 5;
       tags.push('Macro');
       break; // Only count once
     }
@@ -139,7 +133,6 @@ function scoreNewsV2(item: {
     for (const [source, weight] of Object.entries(SOURCE_W)) {
       if (firstSource.includes(source)) {
         impact_score += weight;
-        confidence += weight;
         break;
       }
     }
@@ -152,7 +145,6 @@ function scoreNewsV2(item: {
   
   for (const keyword of OPINION_KEYWORDS) {
     if (headline.includes(keyword)) {
-      confidence -= 8;
       break; // Only count once
     }
   }
@@ -160,97 +152,34 @@ function scoreNewsV2(item: {
   // Cap & floor
   impact_score = Math.max(0, Math.min(100, impact_score));
   
-  // Compute confidence using v1, v2.1, or v2.2 based on feature flags
-  let finalConfidence: number;
-  let debugInfo: any; // Declare debugInfo here
-  
-  // Check for V2.2 first, then V2.1, then fallback to V1
-  const confidenceMode = getConfidenceMode();
-  
-  if (confidenceMode === 'v2.2' || getConfidenceV2() === 'true') {
-    try {
-      // Extract domain from source name (fallback to source name if no domain)
-      const sourceDomains = sources.map(source => {
-        // Map common source names to domains
-        const sourceMappings: { [key: string]: string } = {
-          'Bloomberg Markets': 'bloomberg.com',
-          'Bloomberg': 'bloomberg.com',
-          'Financial Times': 'ft.com',
-          'FT': 'ft.com',
-          'Reuters': 'reuters.com',
-          'CNBC': 'cnbc.com',
-          'MarketWatch': 'marketwatch.com',
-          'TechCrunch': 'techcrunch.com',
-          'The Verge': 'theverge.com',
-          'Ars Technica': 'arstechnica.com',
-          'BBC Business': 'bbc.com',
-          'AP Business': 'apnews.com'
-        };
-        
-        // Check if source name has a mapping
-        if (sourceMappings[source]) {
-          return { domain: sourceMappings[source], isPrimary: false };
-        }
-        
-        // Simple domain extraction - in real implementation, this would be more robust
-        const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
-        return { domain, isPrimary: false };
-      });
-      
-      const v2Inputs = {
-        publishedAt: published_at ? new Date(published_at) : new Date(),
-        now: new Date(),
-        sources: sourceDomains,
-        headline: item.headline || '',
-        body: item.description || '',
-        tags: tags.length > 0 ? tags : undefined,
-        impact_score: Math.round(impact_score),
-        market: undefined // No market data available in current implementation
-      };
-      
-      let v2Result;
-      if (confidenceMode === 'v2.2') {
-        // Use V2.2 scoring
-        v2Result = scoreConfidenceV22(v2Inputs);
-      } else {
-        // Use V2.1 scoring
-        v2Result = scoreConfidenceV2(v2Inputs);
-      }
-      
-      // Use contrast mode based on feature flag (for V2.1 compatibility)
-      if (confidenceMode !== 'v2.2' && getConfidenceV2Contrast() === '0') {
-        // Non-contrast mode: use raw score directly
-        finalConfidence = v2Result.raw;
-      } else {
-        // Default contrast mode: use final score
-        finalConfidence = v2Result.final;
-      }
-      
-      // Include debug information if requested
-      debugInfo = item.debug ? v2Result.debug : undefined;
-      
-      // Log comparison if enabled
-      if (getConfidenceV2Compare() === '1') {
-        console.log(JSON.stringify({
-          type: 'confidence_compare',
-          headline: item.headline?.substring(0, 50),
-          v1: Math.round(confidence),
-          v2_raw: v2Result.raw,
-          v2_final: v2Result.final,
-          mode: confidenceMode || 'v2.1',
-          sources: sources
-        }));
-      }
-    } catch (error) {
-      console.error(`Error computing confidence ${confidenceMode || 'v2.1'}, falling back to v1:`, error);
-      finalConfidence = confidence;
-      debugInfo = undefined; // Ensure debugInfo is undefined on error
+  // Compute categorical confidence state
+  const sourceDomains = sources.map(source => {
+    const sourceMappings: { [key: string]: string } = {
+      'Bloomberg Markets': 'bloomberg.com',
+      'Bloomberg': 'bloomberg.com',
+      'Financial Times': 'ft.com',
+      'FT': 'ft.com',
+      'Reuters': 'reuters.com',
+      'CNBC': 'cnbc.com',
+      'MarketWatch': 'marketwatch.com',
+      'TechCrunch': 'techcrunch.com',
+      'The Verge': 'theverge.com',
+      'Ars Technica': 'arstechnica.com',
+      'BBC Business': 'bbc.com',
+      'AP Business': 'apnews.com'
+    };
+    if (sourceMappings[source]) {
+      return { domain: sourceMappings[source], isPrimary: false };
     }
-  } else {
-    // Use original v1 confidence
-    finalConfidence = confidence;
-    debugInfo = undefined; // Ensure debugInfo is undefined for v1
-  }
+    const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
+    return { domain, isPrimary: false };
+  });
+  const confidence_state = computeConfidenceState({
+    sources: sourceDomains,
+    headline: item.headline || '',
+    body: item.description || '',
+    published_at: published_at
+  });
 
   // Compute verification status if enabled
   let verification: VerificationStatus | undefined;
@@ -305,7 +234,6 @@ function scoreNewsV2(item: {
           type: 'verification_computed',
           headline: item.headline?.substring(0, 50),
           verification,
-          confidence: Math.round(finalConfidence),
           sources: sources
         }));
       }
@@ -319,16 +247,12 @@ function scoreNewsV2(item: {
   // Label
   const impact: 'L'|'M'|'H' = impact_score >= 70 ? 'H' : impact_score >= 45 ? 'M' : 'L';
 
-  // Apply clamp once, right before serializing to API response
-  const clampedConfidence = clamp(finalConfidence, CONF_MIN, CONF_MAX);
-
   return {
     impact_score: Math.round(impact_score),
     impact,
-    confidence: Math.round(clampedConfidence),
+    confidence_state,
     ...(verification && { verification }),
     tags: tags.length > 0 ? tags : undefined,
-    ...(debugInfo && { _confidence_debug: debugInfo }),
     ...(verificationDebug && { _verification_debug: verificationDebug })
   };
 }
@@ -342,8 +266,6 @@ function scoreNewsV3(item: {
   published_at?: string;
   debug?: boolean;
 }): Score {
-  // Start with base values for confidence (unchanged from V2)
-  let confidence = 50;
   const tags: string[] = [];
 
   const headline = (item.headline || '').toLowerCase();
@@ -353,8 +275,7 @@ function scoreNewsV3(item: {
   const tickers = item.tickers || [];
   const published_at = item.published_at;
 
-  // Compute confidence using existing logic (unchanged from V2)
-  // Macro keywords
+  // Macro keywords (for tags only)
   const MACRO_KEYWORDS = [
     'fed', 'interest rate', 'cpi', 'ppi', 'jobs report', 'opec', 
     'oil cut', 'war', 'geopolitics', 'tariff', 'sanctions', 
@@ -363,7 +284,6 @@ function scoreNewsV3(item: {
   
   for (const keyword of MACRO_KEYWORDS) {
     if (text.includes(keyword)) {
-      confidence += 5;
       tags.push('Macro');
       break; // Only count once
     }
@@ -375,122 +295,43 @@ function scoreNewsV3(item: {
     'marketwatch': 3, 'techcrunch': 2 
   };
   
-  if (sources.length > 0) {
-    const firstSource = sources[0].toLowerCase();
-    for (const [source, weight] of Object.entries(SOURCE_W)) {
-      if (firstSource.includes(source)) {
-        confidence += weight;
-        break;
-      }
-    }
-  }
+  // Source weights not used for confidence_state
 
   // Opinion/rumor dampeners (in headline)
   const OPINION_KEYWORDS = [
     'opinion', 'op-ed', 'column', 'rumor', 'reportedly', 'sources say'
   ];
   
-  for (const keyword of OPINION_KEYWORDS) {
-    if (headline.includes(keyword)) {
-      confidence -= 8;
-      break; // Only count once
-    }
-  }
+  // Opinion keywords do not directly affect impact V3 nor confidence_state here
 
-  // Compute confidence using v1, v2.1, or v2.2 based on feature flags
-  let finalConfidence: number;
-  let debugInfo: any;
-  
-  // Check for V2.2 first, then V2.1, then fallback to V1
-  const confidenceMode = getConfidenceMode();
-  
-  if (confidenceMode === 'v2.2' || getConfidenceV2() === 'true') {
-    try {
-      // Extract domain from source name (fallback to source name if no domain)
-      const sourceDomains = sources.map(source => {
-        // Map common source names to domains
-        const sourceMappings: { [key: string]: string } = {
-          'Bloomberg Markets': 'bloomberg.com',
-          'Bloomberg': 'bloomberg.com',
-          'Financial Times': 'ft.com',
-          'FT': 'ft.com',
-          'Reuters': 'reuters.com',
-          'CNBC': 'cnbc.com',
-          'MarketWatch': 'marketwatch.com',
-          'TechCrunch': 'techcrunch.com',
-          'The Verge': 'theverge.com',
-          'Ars Technica': 'arstechnica.com',
-          'BBC Business': 'bbc.com',
-          'AP Business': 'apnews.com'
-        };
-        
-        // Check if source name has a mapping
-        if (sourceMappings[source]) {
-          return { domain: sourceMappings[source], isPrimary: false };
-        }
-        
-        // Simple domain extraction - in real implementation, this would be more robust
-        const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
-        return { domain, isPrimary: false };
-      });
-      
-      const v2Inputs = {
-        publishedAt: published_at ? new Date(published_at) : new Date(),
-        now: new Date(),
-        sources: sourceDomains,
-        headline: item.headline || '',
-        body: item.description || '',
-        tags: tags.length > 0 ? tags : undefined,
-        impact_score: 0, // Not used in V3
-        market: undefined // No market data available in current implementation
-      };
-      
-      let v2Result;
-      if (confidenceMode === 'v2.2') {
-        // Use V2.2 scoring
-        v2Result = scoreConfidenceV22(v2Inputs);
-      } else {
-        // Use V2.1 scoring
-        v2Result = scoreConfidenceV2(v2Inputs);
-      }
-      
-      // Use contrast mode based on feature flag (for V2.1 compatibility)
-      if (confidenceMode !== 'v2.2' && getConfidenceV2Contrast() === '0') {
-        // Non-contrast mode: use raw score directly
-        finalConfidence = v2Result.raw;
-      } else {
-        // Default contrast mode: use final score
-        finalConfidence = v2Result.final;
-      }
-      
-      // Include debug information if requested
-      debugInfo = item.debug ? v2Result.debug : undefined;
-      
-      // Log comparison if enabled
-      if (getConfidenceV2Compare() === '1') {
-        console.log(JSON.stringify({
-          type: 'confidence_compare',
-          headline: item.headline?.substring(0, 50),
-          v1: Math.round(confidence),
-          v2_raw: v2Result.raw,
-          v2_final: v2Result.final,
-          mode: confidenceMode || 'v2.1',
-          sources: sources
-        }));
-      }
-    } catch (error) {
-      console.error(`Error computing confidence ${confidenceMode || 'v2.1'}, falling back to v1:`, error);
-      finalConfidence = confidence;
-      debugInfo = undefined;
+  // Compute categorical confidence state
+  const sourceDomains = sources.map(source => {
+    const sourceMappings: { [key: string]: string } = {
+      'Bloomberg Markets': 'bloomberg.com',
+      'Bloomberg': 'bloomberg.com',
+      'Financial Times': 'ft.com',
+      'FT': 'ft.com',
+      'Reuters': 'reuters.com',
+      'CNBC': 'cnbc.com',
+      'MarketWatch': 'marketwatch.com',
+      'TechCrunch': 'techcrunch.com',
+      'The Verge': 'theverge.com',
+      'Ars Technica': 'arstechnica.com',
+      'BBC Business': 'bbc.com',
+      'AP Business': 'apnews.com'
+    };
+    if (sourceMappings[source]) {
+      return { domain: sourceMappings[source], isPrimary: false };
     }
-  } else {
-    // Use original v1 confidence
-    finalConfidence = confidence;
-    debugInfo = undefined;
-  }
-
-  // Apply clamp once, right before serializing to API response
-  const clampedConfidence = clamp(finalConfidence, CONF_MIN, CONF_MAX);
+    const domain = source.includes('.') ? source.split('.').slice(-2).join('.') : source;
+    return { domain, isPrimary: false };
+  });
+  const confidence_state = computeConfidenceState({
+    sources: sourceDomains,
+    headline: item.headline || '',
+    body: item.description || '',
+    published_at: published_at || new Date().toISOString()
+  });
 
   // Compute Impact V3
   const impactV3Input = {
@@ -507,6 +348,7 @@ function scoreNewsV3(item: {
   // Compute verification status if enabled (same logic as V2)
   let verification: VerificationStatus | undefined;
   let verificationDebug: any;
+  let verificationResult: any;
   
   if (getVerificationMode() === 'v1') {
     try {
@@ -542,13 +384,13 @@ function scoreNewsV3(item: {
         published_at: published_at || new Date().toISOString()
       };
       
+      // Always compute full verification result for V1 mode
+      verificationResult = computeVerification(verificationInputs);
+      verification = verificationResult.status;
+      
+      // Store full result for debug if requested
       if (item.debug) {
-        const debugResult = computeVerificationWithDebug(verificationInputs);
-        verification = debugResult.status;
-        verificationDebug = debugResult;
-      } else {
-        const result = computeVerification(verificationInputs);
-        verification = result.status;
+        verificationDebug = computeVerificationWithDebug(verificationInputs);
       }
       
       // Log verification for metrics
@@ -557,7 +399,6 @@ function scoreNewsV3(item: {
           type: 'verification_computed',
           headline: item.headline?.substring(0, 50),
           verification,
-          confidence: Math.round(clampedConfidence),
           sources: sources
         }));
       }
@@ -565,6 +406,7 @@ function scoreNewsV3(item: {
       console.error('Error computing verification, skipping:', error);
       verification = undefined;
       verificationDebug = undefined;
+      verificationResult = undefined;
     }
   }
 
@@ -650,10 +492,10 @@ function scoreNewsV3(item: {
   return {
     impact_score: Math.round(impactV3Result.raw * 100), // Convert 0-1 to 0-100 for API compatibility
     impact: impactV3Result.category,
-    confidence: Math.round(clampedConfidence),
+    confidence_state,
     ...(verification && { verification }),
+    ...(verificationResult && { verification_result: verificationResult }), // Include full verification result
     tags: tags.length > 0 ? tags : undefined,
-    ...(debugInfo && { _confidence_debug: debugInfo }),
     ...(verificationDebug && { _verification_debug: verificationDebug }),
     ...(item.debug && { _impact_debug: impactV3Result })
   };

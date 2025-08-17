@@ -16,9 +16,8 @@ describe('Storage functions', () => {
         published_at: '2025-01-15T20:10:00Z',
         ingested_at: '2025-01-15T20:15:00Z',
         arrival_at: originalTimestamp,
-        impact: 'L',
-        impact_score: 20,
-        confidence: 50
+        impact: { score: 20, category: 'L' },
+        confidence_state: 'reported'
       };
 
       // First, add the item
@@ -52,9 +51,8 @@ describe('Storage functions', () => {
         published_at: '2025-01-15T20:10:00Z',
         ingested_at: '2025-01-15T20:15:00Z',
         arrival_at: originalTimestamp,
-        impact: 'L',
-        impact_score: 20,
-        confidence: 50
+        impact: { score: 20, category: 'L' },
+        confidence_state: 'reported'
       };
 
       // Add the item
@@ -87,9 +85,8 @@ describe('Storage functions', () => {
         tickers: ['TEST'],
         published_at: '2025-01-15T20:10:00Z',
         ingested_at: '2025-01-15T20:15:00Z',
-        impact: 'L',
-        impact_score: 20,
-        confidence: 50
+        impact: { score: 20, category: 'L' },
+        confidence_state: 'reported'
       };
 
       // Add the item

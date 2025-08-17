@@ -4,7 +4,7 @@ import { scoreContentFit } from './contentFit';
 import { scoreMarketProxy } from './marketProxy';
 
 /**
- * Confidence V2.1 — High-Contrast Scoring System
+ * DEPRECATED: Numeric confidence scoring (V2.1/V2.2)
  * 
  * Weights (sum to 1.0):
  *  W = { P1:0.35, P2:0.25, P3:0.20, P4:0.15, P5:0.05 }
@@ -28,8 +28,8 @@ import { scoreMarketProxy } from './marketProxy';
  */
 
 // Core constants
-export const CONF_MIN = 20;
-export const CONF_MAX = 95;
+export const CONF_MIN = 20; // deprecated
+export const CONF_MAX = 95; // deprecated
 
 // V2.1 Pillar weights (sum = 1.0)
 export const W_P1 = 0.35; // Source + Freshness

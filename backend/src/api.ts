@@ -14,10 +14,6 @@ const getFirebaseProjectId = () => process.env.FIREBASE_PROJECT_ID;
 const getFirebaseClientEmail = () => process.env.FIREBASE_CLIENT_EMAIL;
 const getFirebasePrivateKey = () => process.env.FIREBASE_PRIVATE_KEY;
 const getImpactMode = () => process.env.IMPACT_MODE;
-const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
-const getConfidenceV2 = () => process.env.CONFIDENCE_V2;
-const getConfidenceV2Contrast = () => process.env.CONFIDENCE_V2_CONTRAST;
-const getConfidenceV2Compare = () => process.env.CONFIDENCE_V2_COMPARE;
 const getVerificationMode = () => process.env.VERIFICATION_MODE;
 const getImpactV3Compare = () => process.env.IMPACT_V3_COMPARE;
 
@@ -561,11 +557,11 @@ router.get('/feed', async (req, res) => {
       });
     }
     
-    // Check for debug flags
-    const debugConfidence = debug === 'conf';
-    const debugImpact = debug === 'impact';
-    const debugTime = debug === 'time';
-    const debugVerification = debug === 'verif';
+    // Check for debug flags - handle multiple debug parameters
+    const debugParams = Array.isArray(debug) ? debug : [debug].filter(Boolean);
+    const debugImpact = debugParams.includes('impact');
+    const debugTime = debugParams.includes('time');
+    const debugVerification = debugParams.includes('verif');
     
     // Get news items from Firestore (newest first)
     const newsLimit = limit ? parseInt(limit as string) : 20;
@@ -574,39 +570,60 @@ router.get('/feed', async (req, res) => {
     // Filter for new version items only (v2) - include items without version field for backward compatibility
     items = items.filter(item => !item.version || item.version === 'v2');
     
-    // Apply debug if requested
-    if (debugConfidence || debugImpact || debugVerification) {
-      items = items.map(item => {
-        // Re-score with debug information
-        const scoredItem = scoreNews({
-          headline: item.headline,
-          description: item.why,
-          sources: item.sources,
-          tickers: item.tickers,
-          published_at: item.published_at,
-          debug: true
-        });
-        
-        const result: any = {
-          ...item,
-          confidence: scoredItem.confidence
+    // Always compute new scoring systems (confidence_state, verification V1, impact V3)
+    // Debug parameters only control whether to include debug information
+    items = items.map(item => {
+      // Re-score with new systems
+      const scoredItem = scoreNews({
+        headline: item.headline,
+        description: item.why,
+        sources: item.sources,
+        tickers: item.tickers,
+        published_at: item.published_at,
+        debug: debugImpact || debugVerification
+      });
+      
+      const result: any = {
+        ...item,
+        confidence_state: scoredItem.confidence_state
+      };
+      
+      // Always include new system fields
+      if (scoredItem.verification) {
+        // Transform verification to match frontend expected structure
+        result.verification = {
+          state: scoredItem.verification
         };
         
-        if (debugConfidence) {
-          result.debug = scoredItem._confidence_debug;
+        // Include additional verification details if available
+        if (scoredItem.verification_result) {
+          result.verification.evidence = {
+            sources: item.sources,
+            confirmations: scoredItem.verification_result.k,
+            max_tier: scoredItem.verification_result.max_tier,
+            reason: scoredItem.verification_result.reason
+          };
         }
-        
-        if (debugImpact) {
-          result.impact_debug = scoredItem._impact_debug;
-        }
-        
-        if (debugVerification) {
-          result._verification_debug = scoredItem._verification_debug;
-        }
-        
-        return result;
-      });
-    }
+      }
+      
+      if (scoredItem.impact) {
+        result.impact = scoredItem.impact;
+        result.impact_score = scoredItem.impact_score;
+      }
+      
+      // Include debug information if requested
+      // confidence numeric debug removed
+      
+      if (debugImpact && scoredItem._impact_debug) {
+        result.impact_debug = scoredItem._impact_debug;
+      }
+      
+      if (debugVerification && scoredItem._verification_debug) {
+        result._verification_debug = scoredItem._verification_debug;
+      }
+      
+      return result;
+    });
     
     // Apply timestamp debug if requested (dev only)
     if (debugTime && getNodeEnv() === 'development') {

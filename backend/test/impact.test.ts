@@ -163,7 +163,6 @@ describe('Impact Scoring', () => {
       
       expect(score1.impact).toBe(score2.impact);
       expect(score1.impact_score).toBe(score2.impact_score);
-      expect(score1.confidence).not.toBe(score2.confidence);
     });
   });
 

@@ -1,4 +1,5 @@
 import { breakingScheduler } from '../src/ingest/breakingScheduler';
+import { snapshotEnv, setTestEnv, restoreEnv } from './helpers/env';
 import { publishStub, enrichItem } from '../src/ingest/breakingIngest';
 import { getDb } from '../src/lib/firestore';
 
@@ -19,6 +20,8 @@ const mockEnrichItem = enrichItem as jest.MockedFunction<typeof enrichItem>;
 describe('Breaking Scheduler Integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    snapshotEnv();
+    setTestEnv({ FIREBASE_PROJECT_ID: 'test-project' });
     
     // Mock successful responses
     mockPublishStub.mockResolvedValue({ id: 'test-id', success: true });
@@ -31,6 +34,7 @@ describe('Breaking Scheduler Integration', () => {
 
   afterEach(() => {
     breakingScheduler.stop();
+    restoreEnv();
   });
 
   describe('Fast-path latency', () => {

@@ -99,7 +99,7 @@ app.get('/health', (_req, res) => {
       BREAKING_MODE: getConfig().breakingMode ? '1' : '0',
       VERIFICATION_MODE: getConfig().verificationMode,
       IMPACT_MODE: getConfig().impactMode,
-      CONFIDENCE_MODE: getConfig().confidenceMode,
+      // confidence numeric mode removed
       SOURCE_REQUEST_TIMEOUT_MS: getConfig().sourceRequestTimeoutMs,
       // Redact sensitive values
       FIREBASE_PROJECT_ID: getConfig().firebaseProjectId ? '***' : undefined,

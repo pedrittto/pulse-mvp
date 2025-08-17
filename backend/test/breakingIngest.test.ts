@@ -1,5 +1,6 @@
 import { publishStub, enrichItem, getCurrentSourceStats, resetSourceStats } from '../src/ingest/breakingIngest';
 import { getDb } from '../src/lib/firestore';
+import { snapshotEnv, setTestEnv, restoreEnv } from './helpers/env';
 
 // Mock Firestore
 jest.mock('../src/lib/firestore', () => ({
@@ -15,6 +16,8 @@ describe('Breaking Ingest', () => {
   beforeEach(() => {
     // Reset source stats before each test
     resetSourceStats();
+    snapshotEnv();
+    setTestEnv({ FIREBASE_PROJECT_ID: 'test-project' });
     
     mockDocSnap = {
       exists: false,
@@ -37,6 +40,10 @@ describe('Breaking Ingest', () => {
     };
 
     (getDb as jest.Mock).mockReturnValue(mockDb);
+  });
+
+  afterEach(() => {
+    restoreEnv();
   });
 
   describe('Duplicate aggregation', () => {
@@ -107,7 +114,7 @@ describe('Breaking Ingest', () => {
         url: 'https://example.com/test',
         category: '',
         impact: '',
-        confidence: null,
+        confidence_state: undefined,
         why: '',
         tickers: [],
         published_at: originalArrivalAt,
@@ -121,7 +128,7 @@ describe('Breaking Ingest', () => {
         scoreNews: jest.fn().mockReturnValue({
           impact: 'L',
           impact_score: 20,
-          confidence: 50,
+          confidence_state: 'reported',
           tags: []
         })
       }));

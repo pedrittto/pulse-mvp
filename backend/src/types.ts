@@ -43,9 +43,11 @@ export interface NewsItem {
   // Verification V1 structure
   verification?: VerificationV1;
   
-  // Legacy fields (kept for backward compatibility)
+  // New confidence state (categorical)
+  confidence_state?: 'unconfirmed' | 'reported' | 'corroborated' | 'verified' | 'confirmed';
+  
+  // Legacy fields (kept for backward compatibility - to be removed)
   impact_score?: number; // 0-100
-  confidence?: number; // 0-100
   verification_legacy?: VerificationStatus; // Old verification field
   
   primary_entity?: string;

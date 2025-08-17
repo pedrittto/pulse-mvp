@@ -352,12 +352,11 @@ class BreakingScheduler {
   private shouldSkipContent(title: string): boolean {
     const titleLower = title.toLowerCase();
     
-    // Skip listicles and similar content
+    // Skip listicles and similar content (relaxed: keep more items)
     if (titleLower.startsWith('here are') || 
         titleLower.startsWith('these are') || 
         titleLower.startsWith('what to') ||
-        titleLower.includes('smart moves') ||
-        titleLower.includes('takeaways')) {
+        titleLower.includes('smart moves')) {
       return true;
     }
     
