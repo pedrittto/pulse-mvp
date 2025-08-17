@@ -607,12 +607,30 @@ router.get('/feed', async (req, res) => {
         return n >= 90 ? 'confirmed' : n >= 75 ? 'verified' : n >= 50 ? 'corroborated' : n >= 25 ? 'reported' : 'unconfirmed';
       };
 
-      const mappedState = item.confidence_state || scoredItem.confidence_state || mapNumericToState((item as any).confidence);
+      // Verification to confidence mapping (fallback)
+      const mapVerifToState = (v?: string) => {
+        if (!v) return undefined;
+        const s = String(v).toLowerCase();
+        if (s === 'confirmed') return 'confirmed';
+        if (s === 'verified') return 'verified';
+        if (s === 'reported') return 'reported';
+        if (s === 'unconfirmed') return 'unconfirmed';
+        return undefined;
+      };
+
+      const mappedState = (item.confidence_state && ['unconfirmed','reported','corroborated','verified','confirmed'].includes(item.confidence_state))
+        ? item.confidence_state
+        : (scoredItem.confidence_state
+          || mapVerifToState((item as any)?.verification?.state)
+          || mapNumericToState((item as any).confidence));
 
       const result: any = {
-        ...item,
-        confidence_state: mappedState || 'unconfirmed'
+        ...item
       };
+      // Only set confidence_state if missing on the item
+      if (!result.confidence_state) {
+        result.confidence_state = mappedState || 'unconfirmed';
+      }
       // Title mode handling (non-destructive; only modify if smart mode enabled)
       if (titleMode !== 'original') {
         result.headline = smartTitle(item.headline);
@@ -636,9 +654,36 @@ router.get('/feed', async (req, res) => {
         }
       }
       
+      let impactCategory: any = undefined;
+      let impactScore: number | undefined = undefined;
+      let impactLevel: any = undefined;
       if (scoredItem.impact) {
-        result.impact = scoredItem.impact;
-        result.impact_score = scoredItem.impact_score;
+        impactCategory = (scoredItem as any).impact;
+        impactScore = (scoredItem as any).impact_score;
+        impactLevel = (scoredItem as any).impact; // same as category by design
+      } else {
+        // Fallback: map legacy shapes
+        const rawImpact: any = (item as any).impact;
+        const rawScore: any = (item as any).impact_score;
+        if (typeof rawImpact === 'string') {
+          impactCategory = rawImpact;
+          impactScore = typeof rawScore === 'number' ? rawScore : undefined;
+        } else if (rawImpact && typeof rawImpact === 'object') {
+          impactCategory = rawImpact.category;
+          impactScore = rawImpact.score;
+          impactLevel = rawImpact.level;
+        } else if (typeof rawScore === 'number') {
+          const cat = rawScore >= 80 ? 'C' : rawScore >= 60 ? 'H' : rawScore >= 35 ? 'M' : 'L';
+          impactCategory = cat;
+          impactScore = rawScore;
+        }
+      }
+      if (impactCategory) {
+        // Build resolved impact object per spec
+        const resolved: any = { category: impactCategory, level: impactLevel ?? impactCategory, score: impactScore ?? 0 };
+        const cat = resolved.category ?? resolved.level ?? 'L';
+        result.impact = { category: cat, level: resolved.level ?? cat, score: resolved.score ?? 0 };
+        result.impact_score = impactScore ?? result.impact_score ?? 0;
       }
       
       // Confidence categorical only flag: ensure numeric is never emitted
