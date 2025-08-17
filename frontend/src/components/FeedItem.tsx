@@ -29,7 +29,7 @@ function FeedItem({ item }: FeedItemProps) {
   }, [item.arrival_at, item.ingested_at, item.published_at, tick]); // Include tick dependency
   
   // Process headline and description
-  const processedHeadline = sentenceCase(item.headline);
+  const processedHeadline = process.env.NEXT_PUBLIC_TITLE_CASE_MODE === 'original' ? item.headline : sentenceCase(item.headline);
   const shouldShowDesc = shouldShowDescription(processedHeadline, item.why);
 
   // Get first source domain
@@ -60,7 +60,7 @@ function FeedItem({ item }: FeedItemProps) {
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Show confidence_state badge */}
             {item.confidenceState ? (
-              <ConfidenceBadge confidence={item.confidenceState as any} className="inline-flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-800/80 px-2 py-0.5 text-xs text-neutral-200" />
+              <ConfidenceBadge confidence={item.confidenceState as any} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium border" />
             ) : (
               <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-neutral-700 bg-neutral-800/80 text-neutral-200">
                 Confidence Unknown
@@ -74,7 +74,7 @@ function FeedItem({ item }: FeedItemProps) {
                   category: item.impactCategory as any, 
                   score: item.impactScore || 0 
                 }} 
-                className="inline-flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-800/80 px-2 py-0.5 text-xs text-neutral-200"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium border"
               />
             ) : (
               <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-neutral-700 bg-neutral-800/80 text-neutral-200">
@@ -98,7 +98,15 @@ function FeedItem({ item }: FeedItemProps) {
       
       <div className="flex items-center justify-between text-sm text-neutral-400">
         <div className="flex items-center flex-wrap gap-4 min-w-0">
-          <span className="flex-shrink-0">Source: {getFirstSourceDomain(item.sources)}</span>
+          <span className="flex-shrink-0">Source: {getFirstSourceDomain(item.sources)}
+            {(() => {
+              const tier = (item as any)?.source?.tier ?? (item as any)?.verification?.evidence?.max_tier ?? null;
+              if (!tier) return null;
+              const base = 'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium border ml-2';
+              const color = tier === 1 ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300' : tier === 2 ? 'border-sky-500/30 bg-sky-500/10 text-sky-300' : 'border-zinc-700 bg-zinc-800/70 text-zinc-300';
+              return <span className={`${base} ${color}`}>Tier {tier}</span>;
+            })()}
+          </span>
           {item.tickers.length > 0 && (
             <div className="flex items-center gap-1 flex-shrink-0">
               <span>Tickers:</span>

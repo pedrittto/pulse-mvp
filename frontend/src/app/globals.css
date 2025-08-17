@@ -2,9 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Seamless dark backdrop with fixed radial fades */
+:root { --bg: #0a0a0a; }
 html, body { height: 100%; }
-body {
-  background-image:
-    radial-gradient(1200px 600px at 20% -10%, rgba(255,255,255,0.05), transparent),
-    radial-gradient(800px 400px at 100% 0%, rgba(255,255,255,0.04), transparent);
+body { background: var(--bg); }
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: -1;
+  background:
+    radial-gradient(60% 40% at 20% -10%, rgba(255,255,255,0.06), transparent 70%),
+    radial-gradient(50% 30% at 100% 0%, rgba(255,255,255,0.04), transparent 70%);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-position: left top, right top;
+  background-size: 1600px 900px, 1200px 700px;
 }

@@ -78,7 +78,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   // Loading state
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      <div className="min-h-screen bg-transparent text-neutral-100">
         <ProxyBanner />
         <Topbar 
           onFilterChange={handleFilterChange}
@@ -100,7 +100,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     return (
-      <div className="min-h-screen bg-neutral-950 text-neutral-100">
+      <div className="min-h-screen bg-transparent text-neutral-100">
         <ProxyBanner />
         <Topbar 
           onFilterChange={handleFilterChange}
@@ -210,7 +210,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
 
   // Success state - map backend items to UI format
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-100">
+    <div className="min-h-screen bg-transparent text-neutral-100">
       <ProxyBanner />
       <Topbar 
         onFilterChange={handleFilterChange}
