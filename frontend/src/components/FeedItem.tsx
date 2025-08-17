@@ -29,7 +29,7 @@ function FeedItem({ item }: FeedItemProps) {
   }, [item.arrival_at, item.ingested_at, item.published_at, tick]); // Include tick dependency
   
   // Process headline and description
-  const processedHeadline = process.env.NEXT_PUBLIC_TITLE_CASE_MODE === 'original' ? item.headline : sentenceCase(item.headline);
+  const processedHeadline = (process.env.NEXT_PUBLIC_TITLE_CASE_MODE ?? 'original') === 'original' ? item.headline : sentenceCase(item.headline);
   const shouldShowDesc = shouldShowDescription(processedHeadline, item.why);
 
   // Get first source domain

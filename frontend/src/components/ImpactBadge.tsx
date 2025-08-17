@@ -6,7 +6,8 @@ interface ImpactBadgeProps {
 }
 
 export default function ImpactBadge({ impact, className = '' }: ImpactBadgeProps) {
-  const useColor = process.env.NEXT_PUBLIC_UI_COLOR_BADGES === '1';
+  const COLOR_ON = (process.env.NEXT_PUBLIC_UI_COLOR_BADGES ?? '1').toString().toLowerCase();
+  const useColor = COLOR_ON === '1' || COLOR_ON === 'true';
   const getImpactConfig = (impact: ImpactV3['category']) => {
     switch (impact) {
       case 'L':

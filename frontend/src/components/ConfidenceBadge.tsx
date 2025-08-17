@@ -4,7 +4,8 @@ interface ConfidenceBadgeProps {
 }
 
 export default function ConfidenceBadge({ confidence, className = '' }: ConfidenceBadgeProps) {
-  const useColor = process.env.NEXT_PUBLIC_UI_COLOR_BADGES === '1';
+  const COLOR_ON = (process.env.NEXT_PUBLIC_UI_COLOR_BADGES ?? '1').toString().toLowerCase();
+  const useColor = COLOR_ON === '1' || COLOR_ON === 'true';
   const style = (() => {
     if (!useColor) {
       const neutral = 'border-neutral-700 bg-neutral-800/80 text-neutral-200';

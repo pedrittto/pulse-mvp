@@ -572,6 +572,24 @@ router.get('/feed', async (req, res) => {
     
     // Always compute new scoring systems (confidence_state, verification V1, impact V3)
     // Debug parameters only control whether to include debug information
+    const titleMode = (process.env.TITLE_CASE_MODE ?? 'original').toLowerCase();
+    const smartTitle = (title?: string): string => {
+      if (!title) return '';
+      if (titleMode === 'original') return title;
+      const keepToken = (t: string) => /^[A-Z]{2,}$/.test(t) || /^\$/.test(t) || /[A-Z][a-z]+[A-Z]/.test(t) || /^(Fed|SEC|CFTC|OPEC|ECB|BoE|ETF|IPO|PCE|FOMC|FX|BTC|ETH)$/.test(t);
+      const trimmed = title.trim();
+      // Only adjust if the string appears fully lower-case (rough heuristic)
+      const isAllLower = trimmed === trimmed.toLowerCase();
+      if (!isAllLower) return title; // respect original styling
+      // Capitalize first printable letter; do not downcase the rest
+      const idx = trimmed.search(/[A-Za-z]/);
+      if (idx === -1) return title;
+      const head = trimmed.slice(0, idx);
+      const first = trimmed[idx].toUpperCase();
+      const rest = trimmed.slice(idx + 1).split(/(\s+)/).map(tok => (keepToken(tok) ? tok : tok)).join('');
+      return head + first + rest;
+    };
+
     items = items.map(item => {
       // Re-score with new systems
       const scoredItem = scoreNews({
@@ -595,6 +613,10 @@ router.get('/feed', async (req, res) => {
         ...item,
         confidence_state: mappedState || 'unconfirmed'
       };
+      // Title mode handling (non-destructive; only modify if smart mode enabled)
+      if (titleMode !== 'original') {
+        result.headline = smartTitle(item.headline);
+      }
       
       // Always include new system fields
       if (scoredItem.verification) {
