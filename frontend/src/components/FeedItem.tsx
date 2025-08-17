@@ -46,23 +46,23 @@ function FeedItem({ item }: FeedItemProps) {
   // Verification badge not used for confidence display anymore
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900 transition-colors p-4 shadow-lg shadow-black/20">
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center flex-wrap gap-2 min-w-0">
-          <span className="text-sm text-gray-500 font-mono flex-shrink-0">
+          <span className="text-sm text-neutral-400 font-mono flex-shrink-0">
             {timeText}
           </span>
           {item.breaking && (
-            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-red-100 border border-red-200 text-red-700">
+            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-neutral-700 bg-neutral-800/80 text-neutral-200">
               BREAKING
             </span>
           )}
           <div className="flex items-center gap-2 flex-shrink-0">
             {/* Show confidence_state badge */}
             {item.confidenceState ? (
-              <ConfidenceBadge confidence={item.confidenceState as any} />
+              <ConfidenceBadge confidence={item.confidenceState as any} className="inline-flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-800/80 px-2 py-0.5 text-xs text-neutral-200" />
             ) : (
-              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700">
+              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-neutral-700 bg-neutral-800/80 text-neutral-200">
                 Confidence Unknown
               </span>
             )}
@@ -74,9 +74,10 @@ function FeedItem({ item }: FeedItemProps) {
                   category: item.impactCategory as any, 
                   score: item.impactScore || 0 
                 }} 
+                className="inline-flex items-center gap-1 rounded-md border border-neutral-700 bg-neutral-800/80 px-2 py-0.5 text-xs text-neutral-200"
               />
             ) : (
-              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700">
+              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-neutral-700 bg-neutral-800/80 text-neutral-200">
                 Impact Unknown
               </span>
             )}
@@ -85,17 +86,17 @@ function FeedItem({ item }: FeedItemProps) {
         </div>
       </div>
       
-      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+      <h3 className="text-lg font-semibold text-neutral-50 mb-2">
         {processedHeadline}
       </h3>
       
       {shouldShowDesc && (
-        <p className="text-gray-700 mb-3">
+        <p className="text-neutral-300 mb-3">
           {item.why}
         </p>
       )}
       
-      <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="flex items-center justify-between text-sm text-neutral-400">
         <div className="flex items-center flex-wrap gap-4 min-w-0">
           <span className="flex-shrink-0">Source: {getFirstSourceDomain(item.sources)}</span>
           {item.tickers.length > 0 && (
@@ -103,7 +104,7 @@ function FeedItem({ item }: FeedItemProps) {
               <span>Tickers:</span>
               <div className="flex gap-1">
                 {item.tickers.slice(0, 3).map((ticker) => (
-                  <span key={ticker} className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">
+                  <span key={ticker} className="px-1.5 py-0.5 bg-neutral-800 rounded text-xs">
                     {ticker}
                   </span>
                 ))}

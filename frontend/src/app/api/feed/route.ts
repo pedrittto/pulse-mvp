@@ -19,8 +19,12 @@ function normalizeItem(item: any) {
   // Handle verification field
   const verificationState = item.verification?.state ?? null;
 
-  // Handle new confidence_state field
-  const confidenceState = item.confidence_state ?? null;
+  // Handle new confidence_state field with defensive numeric->state mapping
+  let confidenceState = item.confidence_state ?? null;
+  if (!confidenceState && typeof item.confidence === 'number') {
+    const n = item.confidence;
+    confidenceState = n >= 90 ? 'confirmed' : n >= 75 ? 'verified' : n >= 50 ? 'corroborated' : n >= 25 ? 'reported' : 'unconfirmed';
+  }
   
   // Return normalized item with both original and normalized fields
   return {
@@ -34,7 +38,7 @@ function normalizeItem(item: any) {
     impact: item.impact,
     impact_score: item.impact_score,
     verification: item.verification,
-    confidence_state: item.confidence_state
+    confidence_state: confidenceState
   };
 }
 

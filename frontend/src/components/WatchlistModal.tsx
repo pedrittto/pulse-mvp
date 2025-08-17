@@ -88,6 +88,7 @@ export default function WatchlistModal({ isOpen, onClose, onSave }: WatchlistMod
         tickers,
         keywords,
         min_impact: formData.min_impact,
+        min_confidence_state: 'reported',
       }
 
       const response = await fetch(`${API_BASE}/watchlist`, {

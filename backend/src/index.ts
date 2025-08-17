@@ -155,6 +155,9 @@ if (require.main === module) {
     
     // Start RSS ingestion cron job
     startRSSIngestion();
+    if (process.env.SOURCE_SET === 'crypto_v1') {
+      console.log('[server] SOURCE_SET=crypto_v1 enabled. AUDIT_MODE=%s', process.env.AUDIT_MODE === '1' ? 'ON' : 'OFF');
+    }
     
     // Start breaking news scheduler if enabled
     if (getConfig().breakingMode) {

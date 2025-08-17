@@ -3,6 +3,7 @@ import { getDb } from './lib/firestore';
 import { sanitizeText } from './utils/sanitize';
 import { scoreNews } from './utils/scoring';
 import { composeHeadline, composeSummary } from './utils/factComposer';
+import { isTradingRelevant } from './utils/tradingFilter';
 
 // Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
 const sanitizePayload = (payload: any): any => {
@@ -89,6 +90,23 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         // Add version field for feed filtering
         version: 'v2'
       };
+
+      // Earliest gate for trading-only (second safety net)
+      if (process.env.TRADING_ONLY_FILTER === '1') {
+        try {
+          const sourceUrlOrDomain = safeItem.sources?.[0] || '';
+          const gate = isTradingRelevant(safeItem.headline || '', safeItem.why || '', sourceUrlOrDomain);
+          if (!gate.relevant) {
+            const db = getDb();
+            const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(safeItem.id);
+            await doc.set({ id: safeItem.id, title: safeItem.headline, source: sourceUrlOrDomain, dropped_at: new Date().toISOString(), reason: gate.reason }, { merge: true });
+            skipped++;
+            continue;
+          }
+        } catch (e) {
+          console.error('[filter][trading_only][storage] shadow write failed:', e);
+        }
+      }
 
       // Add new document
       await docRef.set(safeItem);

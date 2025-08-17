@@ -72,8 +72,8 @@ export interface Watchlist {
   user_id: string;
   tickers: string[];
   keywords: string[];
-  min_confidence: number; // Legacy; consider migrating to confidence_state filters
   min_impact: Impact;
+  min_confidence_state?: ConfidenceState;
   quiet_hours?: {
     start: string;
     end: string;

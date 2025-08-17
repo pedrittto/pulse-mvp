@@ -583,9 +583,17 @@ router.get('/feed', async (req, res) => {
         debug: debugImpact || debugVerification
       });
       
+      // Confidence state mapping fallback
+      const mapNumericToState = (n?: number) => {
+        if (typeof n !== 'number' || isNaN(n)) return undefined;
+        return n >= 90 ? 'confirmed' : n >= 75 ? 'verified' : n >= 50 ? 'corroborated' : n >= 25 ? 'reported' : 'unconfirmed';
+      };
+
+      const mappedState = item.confidence_state || scoredItem.confidence_state || mapNumericToState((item as any).confidence);
+
       const result: any = {
         ...item,
-        confidence_state: scoredItem.confidence_state
+        confidence_state: mappedState || 'unconfirmed'
       };
       
       // Always include new system fields
@@ -611,6 +619,11 @@ router.get('/feed', async (req, res) => {
         result.impact_score = scoredItem.impact_score;
       }
       
+      // Confidence categorical only flag: ensure numeric is never emitted
+      if (process.env.CONFIDENCE_CATEGORICAL_ONLY === '1') {
+        if ('confidence' in result) delete result.confidence;
+      }
+
       // Include debug information if requested
       // confidence numeric debug removed
       

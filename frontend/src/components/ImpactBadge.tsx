@@ -11,27 +11,27 @@ export default function ImpactBadge({ impact, className = '' }: ImpactBadgeProps
       case 'L':
         return {
           label: 'Low',
-          classes: 'border-gray-200 bg-gray-50 text-gray-700'
+          classes: 'border-neutral-700 bg-neutral-800/80 text-neutral-200'
         };
       case 'M':
         return {
           label: 'Medium',
-          classes: 'border-amber-200 bg-amber-50 text-amber-700'
+          classes: 'border-neutral-700 bg-neutral-800/80 text-neutral-200'
         };
       case 'H':
         return {
           label: 'High',
-          classes: 'border-red-200 bg-red-50 text-red-700'
+          classes: 'border-neutral-700 bg-neutral-800/80 text-neutral-200 ring-1 ring-red-400/40'
         };
       case 'C':
         return {
           label: 'Critical',
-          classes: 'border-purple-200 bg-purple-50 text-purple-700'
+          classes: 'border-neutral-700 bg-neutral-800/80 text-neutral-200 ring-1 ring-red-400/40'
         };
       default:
         return {
           label: 'Unknown',
-          classes: 'border-gray-200 bg-gray-50 text-gray-700'
+          classes: 'border-neutral-700 bg-neutral-800/80 text-neutral-200'
         };
     }
   };

@@ -7,17 +7,17 @@ export default function ConfidenceBadge({ confidence, className = '' }: Confiden
   const style = (() => {
     switch (confidence) {
       case 'unconfirmed':
-        return { color: 'bg-red-100 border-red-200 text-red-700', text: 'Unconfirmed 🔴' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Unconfirmed' };
       case 'reported':
-        return { color: 'bg-orange-100 border-orange-200 text-orange-700', text: 'Reported 🟠' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Reported' };
       case 'corroborated':
-        return { color: 'bg-yellow-100 border-yellow-200 text-yellow-700', text: 'Corroborated 🟡' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Corroborated' };
       case 'verified':
-        return { color: 'bg-green-100 border-green-200 text-green-700', text: 'Verified 🟢' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Verified' };
       case 'confirmed':
-        return { color: 'bg-blue-100 border-blue-200 text-blue-700', text: 'Confirmed 🔵' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Confirmed' };
       default:
-        return { color: 'bg-gray-100 border-gray-200 text-gray-700', text: 'Unknown' };
+        return { color: 'border-neutral-700 bg-neutral-800/80 text-neutral-200', text: 'Unknown' };
     }
   })();
 

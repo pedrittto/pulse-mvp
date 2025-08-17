@@ -5,6 +5,7 @@ import { scoreNews } from '../utils/scoring';
 import { composeHeadline, composeSummary } from '../utils/factComposer';
 import { sanitizeText } from '../utils/sanitize';
 import { computeVerification } from '../utils/verification';
+import { isTradingRelevant } from '../utils/tradingFilter';
 import { getConfig } from '../config/env';
 
 // Environment getter functions
@@ -128,6 +129,20 @@ export const publishStub = async (item: {
     // Generate ID from title hash for deduplication
     const id = generateArticleHash(item.title);
     const arrivalAt = new Date().toISOString();
+
+    // Earliest stub gate (trading-only)
+    if (process.env.TRADING_ONLY_FILTER === '1') {
+      try {
+        const gate = isTradingRelevant(item.title, item.description || '', item.url || item.source);
+        if (!gate.relevant) {
+          const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(id);
+          await doc.set({ id, title: item.title, source: item.source, url: item.url, dropped_at: arrivalAt, reason: gate.reason }, { merge: true });
+          return { id, success: false, error: 'filtered_non_relevant' };
+        }
+      } catch (e) {
+        console.error('[filter][trading_only][stub] shadow write failed:', e);
+      }
+    }
     
     // Create minimal stub
     const stub: BreakingStub = {
@@ -266,6 +281,21 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
       drivers: score._impact_debug?.drivers || []
     };
     
+    // Trading-only filter shadowing (applies to enriched content)
+    if (process.env.TRADING_ONLY_FILTER === '1') {
+      try {
+        const gate = isTradingRelevant(headline, description, stub.source);
+        if (!gate.relevant) {
+          const db = getDb();
+          const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(id);
+          await doc.set({ id, title: stub.title, source: stub.source, dropped_at: new Date().toISOString(), reason: gate.reason }, { merge: true });
+          return { success: true }; // Do not update prod doc; shadow recorded
+        }
+      } catch (e) {
+        console.error('[filter][trading_only][breaking] shadow write failed:', e);
+      }
+    }
+
     // Update with enriched data (preserve arrival_at)
     const enrichedData = {
       headline: headline,

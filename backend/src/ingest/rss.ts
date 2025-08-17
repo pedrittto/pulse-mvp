@@ -6,7 +6,10 @@ import { addNewsItems, generateArticleHash } from '../storage';
 // import { sanitizeText } from '../utils/sanitize';
 import { scoreNews } from '../utils/scoring';
 import { composeHeadline, composeSummary } from '../utils/factComposer';
+import { isTradingRelevant } from '../utils/tradingFilter';
 import { getDb } from '../lib/firestore';
+import { cryptoFeeds } from '../config/cryptoFeeds';
+import { expansionFeeds } from '../config/expansionFeeds';
 
 const parseXML = promisify(parseString);
 
@@ -142,7 +145,7 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
   });
 
   // Ensure all fields have safe values (no undefined)
-  return {
+  const item = {
     id: generateArticleHash(headline, primaryEntity),
     thread_id: threadId,
     headline: headline,
@@ -160,7 +163,28 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
     confidence_state: score.confidence_state,
     primary_entity: primaryEntity || '',
     category: score.tags?.includes('Macro') ? 'macro' : undefined
-  };
+  } as any;
+
+  // Optional trading-only filter (shadow writes on non-relevant)
+  if (process.env.TRADING_ONLY_FILTER === '1') {
+    try {
+      const domain = sourceName.includes('.') ? sourceName.split('.').slice(-2).join('.') : sourceName;
+      const gate = isTradingRelevant(headline, description, domain);
+      if (!gate.relevant) {
+        const db = getDb();
+        const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(item.id);
+        await doc.set({ ...item, dropped_at: new Date().toISOString(), reason: gate.reason }, { merge: true });
+        // Signal to caller to skip persist
+        (item as any)._dropped = true;
+      } else {
+        (item as any)._filter_reason = gate.reason;
+      }
+    } catch (e) {
+      console.error('[filter][trading_only] shadow write failed:', e);
+    }
+  }
+
+  return item;
 };
 
 // Fetch and parse RSS feed
@@ -208,7 +232,14 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
       return true;
     });
 
-    const items = filteredItems.map(item => normalizeRSSItem(item, feed.name));
+    const items = [] as any[];
+    for (const raw of filteredItems) {
+      const normalized = await normalizeRSSItem(raw, feed.name);
+      if (process.env.TRADING_ONLY_FILTER === '1' && (normalized as any)._dropped) {
+        continue; // Skip non-relevant in prod path; shadow already captured
+      }
+      items.push(normalized);
+    }
     console.log(`Parsed ${items.length} items from ${feed.name} (filtered from ${channel.item.length})`);
     
     return items;
@@ -241,12 +272,32 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
   let highImpactItems = 0;
   let macroItems = 0;
 
-  // Fetch all feeds in parallel
-  const feedPromises = rssFeeds.map(fetchRSSFeed);
+  // Feature flag to include crypto_v1 sources in DRY-RUN (shadow) mode
+  const sourceSet = process.env.SOURCE_SET;
+  const auditMode = process.env.AUDIT_MODE === '1';
+
+  // Fetch all feeds in parallel (base set)
+  const feedPromises: Promise<any[]>[] = rssFeeds.map(fetchRSSFeed);
+
+  // Optionally include crypto feeds (read-only ingest)
+  if (sourceSet === 'crypto_v1') {
+    console.log('[ingest][crypto_v1] Enabled. Fetching crypto feeds...');
+    for (const feed of cryptoFeeds) {
+      feedPromises.push(fetchRSSFeed({ name: feed.name, url: feed.url } as any));
+    }
+  }
+
+  // Optionally include expansion feeds under INGEST_EXPANSION
+  if (process.env.INGEST_EXPANSION === '1') {
+    console.log('[ingest][expansion] Enabled. Fetching expansion feeds...');
+    for (const feed of expansionFeeds) {
+      feedPromises.push(fetchRSSFeed({ name: feed.name, url: feed.url } as any));
+    }
+  }
   const results = await Promise.allSettled(feedPromises);
 
-  // Process results with concurrency limit for database operations
-  const concurrencyLimit = 5; // Process up to 5 feeds concurrently
+  // Process results with concurrency limit for database operations (tune under expansion)
+  const concurrencyLimit = process.env.INGEST_EXPANSION === '1' ? 8 : 5;
   const chunks: PromiseSettledResult<NewsItem[]>[][] = [];
   for (let i = 0; i < results.length; i += concurrencyLimit) {
     chunks.push(results.slice(i, i + concurrencyLimit));
@@ -255,7 +306,9 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
   for (const chunk of chunks) {
     const chunkPromises = chunk.map(async (result, index) => {
       const actualIndex = chunks.indexOf(chunk) * concurrencyLimit + index;
-      const feedName = rssFeeds[actualIndex].name;
+      const baseLen = rssFeeds.length;
+      const isCrypto = sourceSet === 'crypto_v1' && actualIndex >= baseLen;
+      const feedName = isCrypto ? cryptoFeeds[actualIndex - baseLen]?.name || 'crypto' : rssFeeds[actualIndex].name;
 
       if (result.status === 'fulfilled') {
         const items = result.value;
@@ -269,9 +322,30 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
           if (item.category === 'macro') macroItems++;
         });
         
-        const { added, skipped } = await addNewsItems(items);
-        totalAdded += added;
-        totalSkipped += skipped;
+        if ((sourceSet === 'crypto_v1' || process.env.INGEST_EXPANSION === '1') && auditMode) {
+          // Dry-run: write to shadow collection
+          try {
+            const db = getDb();
+            const batch = db.batch();
+            const shadowKey = (sourceSet === 'crypto_v1') ? 'crypto_v1' : 'expansion';
+            const shadow = db.collection('feeds_shadow').doc(shadowKey);
+            const sub = shadow.collection('items');
+            items.forEach(item => {
+              const ref = sub.doc(item.id);
+              batch.set(ref, { ...item, shadow_at: new Date().toISOString(), source_set: shadowKey }, { merge: true });
+            });
+            await batch.commit();
+            totalAdded += items.length;
+            console.log(`[shadow][${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}] wrote ${items.length} items to feeds_shadow/${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}`);
+          } catch (e) {
+            console.error('[shadow] failed to write shadow items:', e);
+            totalErrors++;
+          }
+        } else {
+          const { added, skipped } = await addNewsItems(items);
+          totalAdded += added;
+          totalSkipped += skipped;
+        }
         totalFetched += items.length;
         
         console.log(`${feedName}: ${items.length} fetched, ${added} added, ${skipped} skipped`);

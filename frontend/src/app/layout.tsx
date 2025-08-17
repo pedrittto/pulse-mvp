@@ -2,12 +2,14 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { TimeProvider } from '@/lib/timeContext'
+import Image from 'next/image'
+import Link from 'next/link'
 
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Pulse - Financial News Feed',
-  description: 'Real-time financial news and market updates',
+  title: 'Pulse',
+  description: 'Market-moving news, fast.',
 }
 
 export default function RootLayout({
@@ -17,10 +19,20 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <TimeProvider>
-          {children}
-        </TimeProvider>
+      <body className={`bg-neutral-950 text-neutral-100 antialiased selection:bg-neutral-800 ${inter.className}`}>
+        <header className="sticky top-0 z-50 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/60">
+          <div className="mx-auto max-w-3xl px-4 py-3 flex items-center gap-3">
+            <Link href="/" className="inline-flex items-center gap-2">
+              <Image src="/pulse-logo.png" width={28} height={28} alt="Pulse" className="rounded-md" priority />
+              <span className="text-sm font-semibold text-neutral-200">Pulse</span>
+            </Link>
+          </div>
+        </header>
+        <main className="mx-auto max-w-3xl px-4 py-6">
+          <TimeProvider>
+            {children}
+          </TimeProvider>
+        </main>
       </body>
     </html>
   )

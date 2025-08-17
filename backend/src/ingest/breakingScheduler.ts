@@ -94,6 +94,9 @@ class BreakingScheduler {
   constructor() {
     this.config = this.loadBreakingConfig();
     this.eventWindows = this.loadEventWindowsConfig();
+    if (process.env.SOURCE_SET === 'crypto_v1') {
+      console.log('[breaking][crypto_v1] Fast X accounts enabled (dry-run only unless AUDIT_MODE=1)');
+    }
   }
 
   private loadBreakingConfig(): BreakingConfig {
