@@ -1,12 +1,12 @@
-import { Impact } from '@/types';
+import { ImpactV3 } from '@/types';
 
 interface ImpactBadgeProps {
-  impact: Impact;
+  impact: ImpactV3;
   className?: string;
 }
 
 export default function ImpactBadge({ impact, className = '' }: ImpactBadgeProps) {
-  const getImpactConfig = (impact: Impact) => {
+  const getImpactConfig = (impact: ImpactV3['category']) => {
     switch (impact) {
       case 'L':
         return {
@@ -36,11 +36,11 @@ export default function ImpactBadge({ impact, className = '' }: ImpactBadgeProps
     }
   };
 
-  const config = getImpactConfig(impact);
+  const config = getImpactConfig(impact.category);
 
   return (
     <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${config.classes} ${className}`}>
-      Impact {config.label}
+      Impact {config.label} ({impact.score})
     </span>
   );
 }

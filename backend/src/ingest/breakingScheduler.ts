@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { publishStub, enrichItem } from './breakingIngest';
@@ -90,6 +89,7 @@ class BreakingScheduler {
   private backoffStates: Map<string, BackoffState> = new Map();
   private lastFetchTimes: Map<string, number> = new Map();
   private lastOkTimes: Map<string, number> = new Map();
+  private configReloadInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.config = this.loadBreakingConfig();
@@ -99,10 +99,19 @@ class BreakingScheduler {
   private loadBreakingConfig(): BreakingConfig {
     try {
       const configPath = path.join(__dirname, '../config/breaking-sources.json');
+      if (!fs.existsSync(configPath)) {
+        log('warn', 'Breaking sources config file not found, using default empty config');
+        return {
+          sources: [],
+          default_interval_ms: 120000,
+          watchlist_interval_ms: 10000,
+          event_window_interval_ms: 5000
+        };
+      }
       const configData = fs.readFileSync(configPath, 'utf8');
       return JSON.parse(configData);
     } catch (error) {
-      console.error('[breaking][error] Failed to load breaking sources config:', error);
+      log('warn', 'Failed to load breaking sources config, using default empty config:', error);
       return {
         sources: [],
         default_interval_ms: 120000,
@@ -115,10 +124,14 @@ class BreakingScheduler {
   private loadEventWindowsConfig(): EventWindowsConfig {
     try {
       const configPath = path.join(__dirname, '../config/event-windows.json');
+      if (!fs.existsSync(configPath)) {
+        log('warn', 'Event windows config file not found, using default empty config');
+        return { events: [] };
+      }
       const configData = fs.readFileSync(configPath, 'utf8');
       return JSON.parse(configData);
     } catch (error) {
-      console.error('[breaking][error] Failed to load event windows config:', error);
+      log('warn', 'Failed to load event windows config, using default empty config:', error);
       return { events: [] };
     }
   }
@@ -217,21 +230,27 @@ class BreakingScheduler {
     this.lastFetchTimes.set(source.name, now);
 
     try {
-      const response = await axios.get(source.url, {
-        timeout: 10000,
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const response = await fetch(source.url, {
         headers: {
           'User-Agent': 'Pulse-Breaking/1.0',
           'If-None-Match': this.etags.get(source.name) || '',
           'If-Modified-Since': this.lastModified.get(source.name) || ''
-        }
+        },
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
+
       // Update ETag and Last-Modified
-      if (response.headers.etag) {
-        this.etags.set(source.name, response.headers.etag);
+      if (response.headers.get('etag')) {
+        this.etags.set(source.name, response.headers.get('etag')!);
       }
-      if (response.headers['last-modified']) {
-        this.lastModified.set(source.name, response.headers['last-modified']);
+      if (response.headers.get('last-modified')) {
+        this.lastModified.set(source.name, response.headers.get('last-modified')!);
       }
 
       // Reset backoff on success
@@ -243,7 +262,12 @@ class BreakingScheduler {
         return [];
       }
 
-      const feed = await parseXML(response.data) as RSSFeed;
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const responseText = await response.text();
+      const feed = await parseXML(responseText) as RSSFeed;
       const items = feed.rss?.channel?.[0]?.item || [];
       
       log('debug', `${source.name}: Fetched ${items.length} items`);
@@ -253,20 +277,20 @@ class BreakingScheduler {
       let errorMessage = 'Unknown error';
       let shouldBackoff = false;
 
-      if (error.code === 'ENOTFOUND') {
+      if (error.name === 'AbortError') {
+        errorMessage = 'Request timeout';
+        shouldBackoff = true;
+      } else if (error.code === 'ENOTFOUND') {
         errorMessage = 'DNS ENOTFOUND';
         shouldBackoff = true;
       } else if (error.code === 'ECONNRESET') {
         errorMessage = 'Connection reset';
         shouldBackoff = true;
-      } else if (error.response?.status >= 500) {
-        errorMessage = `HTTP ${error.response.status}`;
+      } else if (error.message?.includes('HTTP 5')) {
+        errorMessage = error.message;
         shouldBackoff = true;
-      } else if (error.response?.status === 429) {
+      } else if (error.message?.includes('HTTP 429')) {
         errorMessage = 'Rate limited (429)';
-        shouldBackoff = true;
-      } else if (error.code === 'ETIMEDOUT') {
-        errorMessage = 'Request timeout';
         shouldBackoff = true;
       } else {
         errorMessage = error.message || 'Network error';
@@ -377,7 +401,10 @@ class BreakingScheduler {
     }
 
     // Reload config every hour to pick up changes
-    setInterval(() => {
+    if (this.configReloadInterval) {
+      clearInterval(this.configReloadInterval);
+    }
+    this.configReloadInterval = setInterval(() => {
       this.reloadConfig();
     }, 60 * 60 * 1000);
   }
@@ -393,6 +420,13 @@ class BreakingScheduler {
       log('info', `Stopped ${sourceName}`);
     }
     this.timers.clear();
+
+    // Clear config reload interval
+    if (this.configReloadInterval) {
+      clearInterval(this.configReloadInterval);
+      this.configReloadInterval = null;
+      log('info', 'Cleared config reload interval');
+    }
   }
 
   // Reload configuration

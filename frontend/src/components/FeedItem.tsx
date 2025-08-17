@@ -6,30 +6,22 @@ import HelpIcon from './HelpIcon'
 import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
 import { config } from '@/lib/config'
-import { memo, useMemo, useState, useEffect } from 'react'
+import { memo, useMemo } from 'react'
+import { useTime } from '@/lib/timeContext'
 
 interface FeedItemProps {
   item: NewsItem
 }
 
 function FeedItem({ item }: FeedItemProps) {
-  // State to force re-renders for relative time updates
-  const [, setTick] = useState(0);
+  // Use global time context for relative time updates
+  const { tick } = useTime();
   
-  // Update relative time every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTick(Date.now());
-    }, 30000); // Update every 30 seconds
-    
-    return () => clearInterval(interval);
-  }, []);
-  
-  // Get arrival time and format it as relative time - recalculates on every render
+  // Get arrival time and format it as relative time - recalculates on global tick
   const timeText = useMemo(() => {
     const arrivalISO = pickArrival(item);
     return formatRelativeTime(arrivalISO);
-  }, [item.arrival_at, item.ingested_at, item.published_at]); // Depend on all time fields
+  }, [item.arrival_at, item.ingested_at, item.published_at, tick]); // Include tick dependency
   
   // Process headline and description
   const processedHeadline = sentenceCase(item.headline);
@@ -56,13 +48,24 @@ function FeedItem({ item }: FeedItemProps) {
           <span className="text-sm text-gray-500 font-mono flex-shrink-0">
             {timeText}
           </span>
+          {item.breaking && (
+            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-red-100 border border-red-200 text-red-700">
+              BREAKING
+            </span>
+          )}
           <div className="flex items-center gap-2 flex-shrink-0">
             {isVerificationMode && item.verification ? (
               <VerificationBadge verification={item.verification} />
             ) : (
-              <ConfidenceBadge confidence={item.confidence} />
+              <ConfidenceBadge confidence={item.confidence || 0} />
             )}
-            <ImpactBadge impact={item.impact} />
+            {item.impact ? (
+              <ImpactBadge impact={item.impact} />
+            ) : (
+              <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border border-gray-200 bg-gray-50 text-gray-700">
+                Impact {item.impact_score || 0}
+              </span>
+            )}
             <HelpIcon />
           </div>
         </div>

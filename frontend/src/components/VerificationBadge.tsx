@@ -1,13 +1,13 @@
-import { VerificationStatus } from '@/types';
+import { VerificationV1 } from '@/types';
 
 interface VerificationBadgeProps {
-  verification: VerificationStatus;
+  verification: VerificationV1;
   className?: string;
 }
 
 export default function VerificationBadge({ verification, className = '' }: VerificationBadgeProps) {
   // Get color and text based on verification status
-  const getVerificationStyle = (status: VerificationStatus) => {
+  const getVerificationStyle = (status: VerificationV1['state']) => {
     switch (status) {
       case 'verified':
         return {
@@ -37,7 +37,7 @@ export default function VerificationBadge({ verification, className = '' }: Veri
     }
   };
 
-  const style = getVerificationStyle(verification);
+  const style = getVerificationStyle(verification.state);
 
   return (
     <div className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${style.color} ${className}`}>

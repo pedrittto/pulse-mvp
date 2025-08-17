@@ -21,7 +21,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   const currentSearch = searchParams.get('q') || ''
 
   // Use custom feed hook with auto-refresh
-  const { data: feedData, error, isLoading, isValidating, refresh } = useFeed({
+  const { data: feedItems, error, isLoading, isValidating, refresh } = useFeed({
     apiBaseUrl,
     filter: currentFilter,
     search: currentSearch,
@@ -96,7 +96,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   }
 
   // Error state
-  if (error || !feedData) {
+  if (error || feedItems === undefined) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     return (
@@ -159,8 +159,8 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
     )
   }
 
-  // Empty state
-  if (!feedData.items || feedData.items.length === 0) {
+  // Empty state - only show when not loading and items are actually empty
+  if (!isLoading && (!feedItems || feedItems.length === 0)) {
     return (
       <div className="min-h-screen bg-gray-50">
         <ProxyBanner />
@@ -220,11 +220,11 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
       />
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="space-y-4">
-          {feedData.items.map((item: NewsItem) => {
+          {feedItems.map((item: NewsItem) => {
             // Map backend item to UI item format
             const uiItem = {
               title: item.headline,
-              summary: item.description ?? '',
+              summary: item.why ?? '',
               publishedAt: item.published_at ?? '',
               imageUrl: item.image_url,
               source: item.sources?.[0],

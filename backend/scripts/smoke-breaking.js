@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 
-const axios = require('axios');
-
 const BASE_URL = process.env.BASE_URL || 'http://localhost:4000';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'test-admin-token';
 
@@ -11,21 +9,30 @@ async function smokeTest() {
   try {
     // 1. Check health endpoint
     console.log('1. Checking /health endpoint...');
-    const healthResponse = await axios.get(`${BASE_URL}/health`);
+    const healthResponse = await fetch(`${BASE_URL}/health`);
+    if (!healthResponse.ok) throw new Error(`HTTP ${healthResponse.status}`);
+    const healthData = await healthResponse.json();
     console.log('✅ Health endpoint OK');
-    console.log(`   Breaking mode: ${healthResponse.data.breaking.mode}`);
-    console.log(`   Sources: ${healthResponse.data.breaking.sources.length}`);
+    console.log(`   Breaking mode: ${healthData.breaking.mode}`);
+    console.log(`   Sources: ${healthData.breaking.sources.length}`);
     
     // 2. Force re-ingest for 2-3 sources
     console.log('\n2. Testing /admin/reingest...');
-    const reingestResponse = await axios.post(`${BASE_URL}/admin/reingest`, {
-      sources: ['Bloomberg Breaking', 'CNBC Breaking'],
-      force: true
-    }, {
-      headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
+    const reingestResponse = await fetch(`${BASE_URL}/admin/reingest`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ADMIN_TOKEN}` 
+      },
+      body: JSON.stringify({
+        sources: ['Bloomberg Breaking', 'CNBC Breaking'],
+        force: true
+      })
     });
+    if (!reingestResponse.ok) throw new Error(`HTTP ${reingestResponse.status}`);
+    const reingestData = await reingestResponse.json();
     console.log('✅ Re-ingest scheduled');
-    console.log(`   Scheduled: ${reingestResponse.data.scheduled.join(', ')}`);
+    console.log(`   Scheduled: ${reingestData.scheduled.join(', ')}`);
     
     // 3. Wait 60 seconds
     console.log('\n3. Waiting 60 seconds for aggregation...');
@@ -33,8 +40,10 @@ async function smokeTest() {
     
     // 4. Check health again for stats
     console.log('\n4. Checking aggregated stats...');
-    const healthResponse2 = await axios.get(`${BASE_URL}/health`);
-    const sources = healthResponse2.data.breaking.sources;
+    const healthResponse2 = await fetch(`${BASE_URL}/health`);
+    if (!healthResponse2.ok) throw new Error(`HTTP ${healthResponse2.status}`);
+    const healthData2 = await healthResponse2.json();
+    const sources = healthData2.breaking.sources;
     
     sources.forEach(source => {
       if (source.newInLast1m > 0 || source.duplicatesInLast1m > 0) {
@@ -44,21 +53,22 @@ async function smokeTest() {
     
     // 5. Reset breaking state
     console.log('\n5. Testing /admin/reset-breaking-state...');
-    await axios.post(`${BASE_URL}/admin/reset-breaking-state`, {}, {
-      headers: { 'Authorization': `Bearer ${ADMIN_TOKEN}` }
+    const resetResponse = await fetch(`${BASE_URL}/admin/reset-breaking-state`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${ADMIN_TOKEN}` 
+      },
+      body: JSON.stringify({})
     });
+    if (!resetResponse.ok) throw new Error(`HTTP ${resetResponse.status}`);
     console.log('✅ Breaking state reset');
     
     console.log('\n🎉 Smoke test completed successfully!');
     
   } catch (error) {
     console.error('\n❌ Smoke test failed:');
-    if (error.response) {
-      console.error(`   Status: ${error.response.status}`);
-      console.error(`   Data: ${JSON.stringify(error.response.data, null, 2)}`);
-    } else {
-      console.error(`   Error: ${error.message}`);
-    }
+    console.error(`   Error: ${error.message}`);
     process.exit(1);
   }
 }

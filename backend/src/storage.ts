@@ -85,7 +85,9 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         category: sanitizedItem.category || '',
         ingested_at: sanitizedItem.ingested_at ?? new Date().toISOString(),
         // Set arrival_at only on first insert - never overwrite existing
-        arrival_at: sanitizedItem.arrival_at ?? new Date().toISOString()
+        arrival_at: sanitizedItem.arrival_at ?? new Date().toISOString(),
+        // Add version field for feed filtering
+        version: 'v2'
       };
 
       // Add new document
@@ -137,7 +139,7 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
       };
 
       // Backfill scoring if missing
-      if (!cleanedItem.impact_score || !cleanedItem.confidence || cleanedItem.impact === 'L') {
+      if (!cleanedItem.impact_score || !cleanedItem.confidence || !cleanedItem.impact || cleanedItem.impact.category === 'L') {
         const score = scoreNews({
           headline: cleanedItem.headline,
           description: cleanedItem.why,
@@ -146,7 +148,11 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
           published_at: cleanedItem.published_at
         });
         
-        cleanedItem.impact = score.impact;
+        cleanedItem.impact = {
+          score: score.impact_score,
+          category: score.impact,
+          drivers: []
+        };
         cleanedItem.impact_score = score.impact_score;
         cleanedItem.confidence = score.confidence;
         if (score.tags?.includes('Macro') && !cleanedItem.category) {

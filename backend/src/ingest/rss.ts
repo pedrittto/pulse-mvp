@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { NewsItem, Impact } from '../types';
@@ -157,7 +156,11 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
     tickers: primaryEntity ? [primaryEntity] : [],
     published_at: pubDate,
     ingested_at: ingestedAt,
-    impact: score.impact as Impact,
+    impact: {
+      score: score.impact_score,
+      category: score.impact,
+      drivers: []
+    },
     impact_score: score.impact_score,
     confidence: score.confidence,
     primary_entity: primaryEntity || '',
@@ -169,14 +172,26 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
 const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
   try {
     console.log(`Fetching RSS feed: ${feed.name}`);
-    const response = await axios.get(feed.url, {
-      timeout: 10000,
+    
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(feed.url, {
       headers: {
         'User-Agent': 'Pulse-MVP-RSS-Ingestor/1.0'
-      }
+      },
+      signal: controller.signal
     });
 
-    const parsed = await parseXML(response.data) as RSSFeed;
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const responseText = await response.text();
+    const parsed = await parseXML(responseText) as RSSFeed;
     const channel = parsed.rss?.channel?.[0];
     
     if (!channel?.item) {
@@ -202,7 +217,15 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
     
     return items;
   } catch (error) {
-    console.error(`Error fetching ${feed.name}:`, error instanceof Error ? error.message : 'Unknown error');
+    if (error instanceof Error) {
+      if (error.name === 'AbortError') {
+        console.error(`Error fetching ${feed.name}: Request timeout`);
+      } else {
+        console.error(`Error fetching ${feed.name}:`, error.message);
+      }
+    } else {
+      console.error(`Error fetching ${feed.name}: Unknown error`);
+    }
     return [];
   }
 };
@@ -226,33 +249,46 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
   const feedPromises = rssFeeds.map(fetchRSSFeed);
   const results = await Promise.allSettled(feedPromises);
 
-  // Process results
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
-    const feedName = rssFeeds[i].name;
+  // Process results with concurrency limit for database operations
+  const concurrencyLimit = 5; // Process up to 5 feeds concurrently
+  const chunks: PromiseSettledResult<NewsItem[]>[][] = [];
+  for (let i = 0; i < results.length; i += concurrencyLimit) {
+    chunks.push(results.slice(i, i + concurrencyLimit));
+  }
 
-    if (result.status === 'fulfilled') {
-      const items = result.value;
-      totalFetched += items.length;
-      
-      // Count sanitized fields and scoring
-      items.forEach(item => {
-        if (item.headline && item.headline !== 'Untitled') cleanedHeadlines++;
-        if (item.why) cleanedDescriptions++;
-        scoredItems++;
-        if (item.impact === 'H') highImpactItems++;
-        if (item.category === 'macro') macroItems++;
-      });
-      
-      const { added, skipped } = await addNewsItems(items);
-      totalAdded += added;
-      totalSkipped += skipped;
-      
-      console.log(`${feedName}: ${items.length} fetched, ${added} added, ${skipped} skipped`);
-    } else {
-      console.error(`${feedName}: Failed to fetch - ${result.reason}`);
-      totalErrors++;
-    }
+  for (const chunk of chunks) {
+    const chunkPromises = chunk.map(async (result, index) => {
+      const actualIndex = chunks.indexOf(chunk) * concurrencyLimit + index;
+      const feedName = rssFeeds[actualIndex].name;
+
+      if (result.status === 'fulfilled') {
+        const items = result.value;
+        
+        // Count sanitized fields and scoring
+        items.forEach(item => {
+          if (item.headline && item.headline !== 'Untitled') cleanedHeadlines++;
+          if (item.why) cleanedDescriptions++;
+          scoredItems++;
+          if (item.impact?.category === 'H') highImpactItems++;
+          if (item.category === 'macro') macroItems++;
+        });
+        
+        const { added, skipped } = await addNewsItems(items);
+        totalAdded += added;
+        totalSkipped += skipped;
+        totalFetched += items.length;
+        
+        console.log(`${feedName}: ${items.length} fetched, ${added} added, ${skipped} skipped`);
+        return { success: true, feedName, items: items.length, added, skipped };
+      } else {
+        console.error(`${feedName}: Failed to fetch - ${result.reason}`);
+        totalErrors++;
+        return { success: false, feedName, error: result.reason };
+      }
+    });
+
+    // Process chunk concurrently
+    await Promise.all(chunkPromises);
   }
 
   const duration = Date.now() - startTime;

@@ -4,29 +4,15 @@ import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-// import { config } from './config/env';
+import { getConfig } from './config/env';
 import apiRoutes from './api';
-import { startRSSIngestion } from './cron';
+import { startRSSIngestion, stopRSSIngestion } from './cron';
 import { breakingScheduler } from './ingest/breakingScheduler';
-import { getCurrentSourceStats } from './ingest/breakingIngest';
+import { getCurrentSourceStats, cleanupBreakingIngest } from './ingest/breakingIngest';
 import { logAdminDiagnostics } from './middleware/admin';
 
-// Environment getter functions
-const getPort = () => Number(process.env.PORT) || 4000;
-const getRateLimitPerMinute = () => parseInt(process.env.RATE_LIMIT_PER_MINUTE || '60', 10);
-const getAllowedOrigins = () => (process.env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-const getNodeEnv = () => process.env.NODE_ENV;
-const getBreakingMode = () => process.env.BREAKING_MODE;
-const getVerificationMode = () => process.env.VERIFICATION_MODE;
-const getImpactMode = () => process.env.IMPACT_MODE;
-const getConfidenceMode = () => process.env.CONFIDENCE_MODE;
-const getSourceRequestTimeoutMs = () => process.env.SOURCE_REQUEST_TIMEOUT_MS;
-const getFirebaseProjectId = () => process.env.FIREBASE_PROJECT_ID;
-const getBreakingSourcesJson = () => process.env.BREAKING_SOURCES_JSON;
-const getEventWindowsJson = () => process.env.EVENT_WINDOWS_JSON;
-
 const app = express();
-const port = getPort();
+const port = getConfig().port;
 
 // Export app for testing (without starting the server)
 export { app };
@@ -34,7 +20,7 @@ export { app };
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: getRateLimitPerMinute(),
+  max: getConfig().rateLimitPerMinute,
   message: {
     error: {
       message: 'Too many requests from this IP, please try again later.',
@@ -44,7 +30,7 @@ const limiter = rateLimit({
 });
 
 // CORS configuration
-const allowed = getAllowedOrigins();
+const allowed = getConfig().allowedOrigins;
 
 // CORS middleware
 app.use(cors({
@@ -79,7 +65,7 @@ app.get('/health', (_req, res) => {
   const sourceStats = getCurrentSourceStats();
   
   // Get breaking mode status
-  const breakingMode = getBreakingMode() === '1';
+  const breakingMode = getConfig().breakingMode;
   
   // Build breaking snapshot
   const breakingSnapshot = {
@@ -109,23 +95,23 @@ app.get('/health', (_req, res) => {
     ok: true,
     timestamp: new Date().toISOString(),
     env: {
-      NODE_ENV: getNodeEnv(),
-      BREAKING_MODE: getBreakingMode(),
-      VERIFICATION_MODE: getVerificationMode(),
-      IMPACT_MODE: getImpactMode(),
-      CONFIDENCE_MODE: getConfidenceMode(),
-      SOURCE_REQUEST_TIMEOUT_MS: getSourceRequestTimeoutMs(),
+      NODE_ENV: getConfig().nodeEnv,
+      BREAKING_MODE: getConfig().breakingMode ? '1' : '0',
+      VERIFICATION_MODE: getConfig().verificationMode,
+      IMPACT_MODE: getConfig().impactMode,
+      CONFIDENCE_MODE: getConfig().confidenceMode,
+      SOURCE_REQUEST_TIMEOUT_MS: getConfig().sourceRequestTimeoutMs,
       // Redact sensitive values
-      FIREBASE_PROJECT_ID: getFirebaseProjectId() ? '***' : undefined,
-      ADMIN_TOKEN: process.env.ADMIN_TOKEN ? '***' : undefined,
-      ADMIN_ALLOW_PURGE: process.env.ADMIN_ALLOW_PURGE === '1'
+      FIREBASE_PROJECT_ID: getConfig().firebaseProjectId ? '***' : undefined,
+      ADMIN_TOKEN: getConfig().adminToken ? '***' : undefined,
+      ADMIN_ALLOW_PURGE: getConfig().adminAllowPurge
     },
     config: {
-      breakingMode: getBreakingMode() === '1',
-      verificationMode: getVerificationMode() || 'v1',
-      impactMode: getImpactMode() || 'v3',
-      breakingSourcesJson: getBreakingSourcesJson() ? 'configured' : 'not configured',
-      eventWindowsJson: getEventWindowsJson() ? 'configured' : 'not configured'
+      breakingMode: getConfig().breakingMode,
+      verificationMode: getConfig().verificationMode,
+      impactMode: getConfig().impactMode,
+      breakingSourcesJson: getConfig().breakingSourcesJson ? 'configured' : 'not configured',
+      eventWindowsJson: getConfig().eventWindowsJson ? 'configured' : 'not configured'
     },
     breaking: breakingSnapshot
   });
@@ -171,7 +157,7 @@ if (require.main === module) {
     startRSSIngestion();
     
     // Start breaking news scheduler if enabled
-    if (getBreakingMode() === '1') {
+    if (getConfig().breakingMode) {
       console.log('[breaking] Starting breaking news scheduler');
       breakingScheduler.start();
     } else {
@@ -190,4 +176,35 @@ if (require.main === module) {
       process.exit(1);
     }
   });
+
+  // Graceful shutdown handling
+  const gracefulShutdown = (signal: string) => {
+    console.log(`[server] Received ${signal}, starting graceful shutdown...`);
+    
+    // Stop accepting new connections
+    server.close(() => {
+      console.log('[server] HTTP server closed');
+      
+      // Cleanup all intervals and cron jobs
+      cleanupBreakingIngest();
+      stopRSSIngestion();
+      
+      if (getConfig().breakingMode) {
+        breakingScheduler.stop();
+      }
+      
+      console.log('[server] Graceful shutdown completed');
+      process.exit(0);
+    });
+
+    // Force exit after 10 seconds if graceful shutdown fails
+    setTimeout(() => {
+      console.error('[server] Forced shutdown after timeout');
+      process.exit(1);
+    }, 10000);
+  };
+
+  // Register shutdown handlers
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }

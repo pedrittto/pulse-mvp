@@ -49,20 +49,41 @@ const incrementStats = (source: string, type: keyof Omit<SourceStats, 'lastReset
   stats[type]++;
 };
 
+// Store interval reference for cleanup
+let statsInterval: NodeJS.Timeout | null = null;
+
 // Emit summary every minute
-setInterval(() => {
-  for (const [source, stats] of sourceStats.entries()) {
-    if (stats.fetched > 0) {
-      log('info', `${source}: fetched=${stats.fetched} new=${stats.new} duplicate=${stats.duplicate} errors=${stats.errors} interval=60s`);
-      // Reset for next window
-      stats.fetched = 0;
-      stats.new = 0;
-      stats.duplicate = 0;
-      stats.errors = 0;
-      stats.lastReset = Date.now();
-    }
+const startStatsInterval = (): void => {
+  if (statsInterval) {
+    clearInterval(statsInterval);
   }
-}, 60000);
+  
+  statsInterval = setInterval(() => {
+    for (const [source, stats] of sourceStats.entries()) {
+      if (stats.fetched > 0) {
+        log('info', `${source}: fetched=${stats.fetched} new=${stats.new} duplicate=${stats.duplicate} errors=${stats.errors} interval=60s`);
+        // Reset for next window
+        stats.fetched = 0;
+        stats.new = 0;
+        stats.duplicate = 0;
+        stats.errors = 0;
+        stats.lastReset = Date.now();
+      }
+    }
+  }, 60000);
+};
+
+// Cleanup function for intervals
+export const cleanupBreakingIngest = (): void => {
+  if (statsInterval) {
+    clearInterval(statsInterval);
+    statsInterval = null;
+    log('info', 'Cleaned up breaking ingest intervals');
+  }
+};
+
+// Start the stats interval
+startStatsInterval();
 
 export interface BreakingStub {
   id: string;
@@ -205,7 +226,8 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
     });
     
     // Compute verification if enabled
-    let verification = 'reported';
+    let verificationV1 = undefined;
+    let verificationLegacy = 'reported';
     if (getConfig().verificationMode === 'v1') {
       const verificationResult = computeVerification({
         sources: [{ domain: stub.source, isPrimary: true }],
@@ -213,7 +235,16 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
         body: description,
         published_at: stub.published_at || stub.arrival_at
       });
-      verification = verificationResult.status;
+      verificationLegacy = verificationResult.status;
+      verificationV1 = {
+        state: verificationResult.status,
+        evidence: {
+          sources: [stub.source],
+          confirmations: verificationResult.k,
+          max_tier: verificationResult.max_tier,
+          reason: verificationResult.reason
+        }
+      };
     }
     
     // Compute scoring
@@ -228,15 +259,33 @@ export const enrichItem = async (id: string): Promise<{ success: boolean; error?
     // Generate thread ID
     const threadId = generateThreadId(primaryEntity, stub.published_at || stub.arrival_at);
     
+    // Build new structure for Impact V3
+    const impactV3 = {
+      score: score.impact_score,
+      category: score.impact,
+      drivers: score._impact_debug?.drivers || []
+    };
+    
     // Update with enriched data (preserve arrival_at)
     const enrichedData = {
       headline: headline,
       why: description,
       tickers: primaryEntity ? [primaryEntity] : [],
-      impact: score.impact as Impact,
+      
+      // Breaking Mode: mark as breaking for fresh stubs
+      breaking: true,
+      
+      // Impact V3 structure
+      impact: impactV3,
+      
+      // Verification V1 structure
+      verification: verificationV1,
+      
+      // Legacy fields (for backward compatibility)
       impact_score: score.impact_score,
       confidence: score.confidence,
-      verification: verification,
+      verification_legacy: verificationLegacy,
+      
       primary_entity: primaryEntity || '',
       category: score.tags?.includes('Macro') ? 'macro' : '',
       thread_id: threadId,

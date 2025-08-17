@@ -30,7 +30,7 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
   const refreshInterval = parseInt(process.env.NEXT_PUBLIC_FEED_REFRESH_MS || '60000', 10)
 
   // SWR hook with auto-refresh
-  const { data: feedData, error, isLoading, isValidating } = useSWR<FeedResponse>(
+  const { data: feedItems, error, isLoading, isValidating } = useSWR<any[]>(
     buildApiUrl(),
     fetcher,
     {
@@ -39,7 +39,7 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
       revalidateOnFocus: false, // Don't revalidate when window gains focus
       revalidateOnReconnect: true, // Revalidate when reconnecting to network
       onSuccess: (data) => {
-        console.info('FEED_LOADED', data.items?.length || 0, data.items?.[0])
+        console.info('FEED_LOADED', data?.length || 0, data?.[0])
       },
       onError: (err) => {
         console.error('Failed to fetch feed data:', err)
@@ -56,7 +56,7 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
   }, [buildApiUrl])
 
   return {
-    data: feedData,
+    data: feedItems ?? [],
     error,
     isLoading,
     isValidating,

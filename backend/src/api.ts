@@ -571,8 +571,8 @@ router.get('/feed', async (req, res) => {
     const newsLimit = limit ? parseInt(limit as string) : 20;
     let items = await getNewsItems(newsLimit);
     
-    // Filter for new version items only (v2)
-    items = items.filter(item => item.version === 'v2');
+    // Filter for new version items only (v2) - include items without version field for backward compatibility
+    items = items.filter(item => !item.version || item.version === 'v2');
     
     // Apply debug if requested
     if (debugConfidence || debugImpact || debugVerification) {

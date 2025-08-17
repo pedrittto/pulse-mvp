@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "Pulse MVP - News aggregation and analysis platform",
   "scripts": {
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "dev": "node scripts/dev.js"
   },
   "devDependencies": {
     "husky": "^9.0.11"
