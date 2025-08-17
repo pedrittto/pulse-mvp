@@ -12,14 +12,13 @@ interface FilterPillProps {
 }
 
 function FilterPill({ filter, label, active, onClick }: FilterPillProps) {
+  const base = 'inline-flex items-center rounded-full px-3 py-1 text-sm transition-colors';
+  const unselected = 'border border-neutral-800 bg-neutral-900/70 text-neutral-300 hover:bg-neutral-900';
+  const selected = 'border border-neutral-700 bg-neutral-800 text-neutral-100';
   return (
     <button
       onClick={() => onClick(filter)}
-      className={`px-3 py-1 text-sm rounded-full transition-colors ${
-        active
-          ? 'bg-blue-600 text-white'
-          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-      }`}
+      className={`${base} ${active ? selected : unselected}`}
     >
       {label}
     </button>
@@ -84,26 +83,22 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh, i
 
   return (
     <>
-      <div className="bg-white border-b border-gray-200 px-4 py-3">
+      <div className="border-b border-neutral-900/60 px-4 py-3 bg-neutral-950/60 backdrop-blur supports-[backdrop-filter]:bg-neutral-950/40">
         <div className="max-w-4xl mx-auto">
           {/* Top row: Title and buttons */}
           <div className="flex justify-between items-center mb-3">
-            <h1 className="text-xl font-semibold text-gray-900">Pulse</h1>
+            <h1 className="text-xl font-semibold text-neutral-200">Pulse</h1>
             <div className="flex items-center space-x-2">
               <button
                 onClick={() => router.push('/watchlist')}
-                className="px-3 py-1 text-sm bg-gray-600 text-white rounded hover:bg-gray-700 transition-colors"
+                className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-850"
               >
                 Watchlist
               </button>
               <button
                 onClick={onRefresh}
                 disabled={isValidating}
-                className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-2 ${
-                  isValidating 
-                    ? 'bg-blue-400 text-white cursor-not-allowed' 
-                    : 'bg-blue-600 text-white hover:bg-blue-700'
-                }`}
+                className={`rounded-md border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-sm text-neutral-100 hover:bg-neutral-750 active:bg-neutral-700 flex items-center gap-2 ${isValidating ? 'opacity-70 cursor-not-allowed' : ''}`}
               >
                 {isValidating && (
                   <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
@@ -118,7 +113,7 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh, i
           
           {/* Bottom row: Filters and search */}
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap gap-2 items-center">
               {filters.map(({ filter, label }) => (
                 <FilterPill
                   key={filter}
@@ -135,7 +130,7 @@ export default function Topbar({ onFilterChange, onWatchlistUpdate, onRefresh, i
               placeholder="Search..."
               value={searchValue}
               onChange={(e) => handleSearchChange(e.target.value)}
-              className="px-3 py-1 text-sm border border-gray-300 rounded w-48 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="w-full md:w-72 rounded-md border border-neutral-800 bg-neutral-900/80 px-3 py-2 text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-600 focus:border-neutral-600"
             />
           </div>
         </div>

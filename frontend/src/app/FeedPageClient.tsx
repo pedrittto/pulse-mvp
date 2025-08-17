@@ -78,7 +78,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   // Loading state
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <ProxyBanner />
         <Topbar 
           onFilterChange={handleFilterChange}
@@ -88,7 +88,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="text-center py-8">
-            <div className="text-gray-600">Loading…</div>
+            <div className="text-neutral-400">Loading…</div>
           </div>
         </div>
       </div>
@@ -100,7 +100,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <ProxyBanner />
         <Topbar 
           onFilterChange={handleFilterChange}
@@ -109,33 +109,33 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
           isValidating={isValidating}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-            <div className="text-red-600 mb-4 text-center">
+          <div className="border border-red-400/30 bg-red-950/20 rounded-lg p-6">
+            <div className="text-red-300 mb-4 text-center">
               <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.268 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-red-800 mb-4 text-center">Failed to load feed</h3>
+            <h3 className="text-lg font-medium text-red-200 mb-4 text-center">Failed to load feed</h3>
             
             {/* Debug Information */}
-            <div className="bg-white border border-red-200 rounded p-4 mb-4">
-              <h4 className="font-medium text-red-800 mb-2">Debug Information:</h4>
-              <div className="space-y-2 text-sm">
+            <div className="border border-neutral-800 bg-neutral-900/60 rounded p-4 mb-4">
+              <h4 className="font-medium text-neutral-200 mb-2">Debug Information:</h4>
+              <div className="space-y-2 text-sm text-neutral-300">
                 <div>
-                  <span className="font-medium text-gray-700">API Base URL:</span>
-                  <code className="ml-2 px-2 py-1 bg-gray-100 rounded text-red-600">
+                  <span className="font-medium text-neutral-300">API Base URL:</span>
+                  <code className="ml-2 px-2 py-1 bg-neutral-800 rounded text-neutral-200">
                     {API_BASE}
                   </code>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">API Base URL:</span>
-                  <code className="ml-2 px-2 py-1 bg-gray-100 rounded text-red-600 break-all">
+                  <span className="font-medium text-neutral-300">API Base URL:</span>
+                  <code className="ml-2 px-2 py-1 bg-neutral-800 rounded text-neutral-200 break-all">
                     {apiBaseUrl}
                   </code>
                 </div>
                 <div>
-                  <span className="font-medium text-gray-700">Error Message:</span>
-                  <div className="mt-1 px-2 py-1 bg-gray-100 rounded text-red-600 break-words">
+                  <span className="font-medium text-neutral-300">Error Message:</span>
+                  <div className="mt-1 px-2 py-1 bg-neutral-800 rounded text-red-300 break-words">
                     {errorMessage}
                   </div>
                 </div>
@@ -143,12 +143,12 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
             </div>
             
             <div className="text-center">
-              <p className="text-red-600 mb-4">
+              <p className="text-red-300 mb-4">
                 Unable to connect to the news feed. Please check your connection and use the Refresh button to try again.
               </p>
               <button
                 onClick={handleRefresh}
-                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                className="rounded-md border border-neutral-700 bg-neutral-800 px-4 py-2 text-neutral-100 hover:bg-neutral-750"
               >
                 Try Again
               </button>
@@ -162,7 +162,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
   // Empty state - only show when not loading and items are actually empty
   if (!isLoading && (!feedItems || feedItems.length === 0)) {
     return (
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-neutral-950 text-neutral-100">
         <ProxyBanner />
         <Topbar 
           onFilterChange={handleFilterChange}
@@ -171,16 +171,16 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
           isValidating={isValidating}
         />
         <div className="max-w-4xl mx-auto px-4 py-8">
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 text-center">
-            <div className="text-gray-400 mb-4">
+          <div className="border border-neutral-800 bg-neutral-900/60 rounded-lg p-6 text-center">
+            <div className="text-neutral-400 mb-4">
               <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-gray-800 mb-2">
+            <h3 className="text-lg font-medium text-neutral-200 mb-2">
               {currentFilter === 'my' ? 'No personalized items' : 'No items yet'}
             </h3>
-            <p className="text-gray-600 mb-4">
+            <p className="text-neutral-400 mb-4">
               {currentFilter === 'my' 
                 ? 'No news items match your watchlist. Add tickers and keywords to see personalized content.'
                 : 'The news feed is empty. Check back later for updates.'
@@ -190,13 +190,13 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
               <div className="flex justify-center gap-3">
                 <button
                   onClick={() => handleFilterChange('all')}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                  className="rounded-md border border-neutral-700 bg-neutral-800 px-4 py-2 text-neutral-100 hover:bg-neutral-750"
                 >
                   View All News
                 </button>
                 <button
                   onClick={() => router.push('/watchlist')}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 transition-colors"
+                  className="rounded-md border border-neutral-800 bg-neutral-900 px-4 py-2 text-neutral-300 hover:bg-neutral-850"
                 >
                   Manage Watchlist
                 </button>
@@ -210,7 +210,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
 
   // Success state - map backend items to UI format
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-neutral-950 text-neutral-100">
       <ProxyBanner />
       <Topbar 
         onFilterChange={handleFilterChange}
@@ -219,7 +219,7 @@ export default function FeedPageClient({ apiBaseUrl }: FeedPageClientProps) {
         isValidating={isValidating}
       />
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="space-y-4">
+        <div className="space-y-4 md:space-y-5">
           {feedItems.map((item: NewsItem) => {
             // Map backend item to UI item format
             const uiItem = {
