@@ -91,7 +91,7 @@ export function isTradingRelevant(
           'wsj.com': /^\/(opinion|style)/i,
           'reuters.com': /^\/lifestyle/i,
           'marketwatch.com': /^\/(personal-finance|opinion|lifestyle)/i,
-          'investing.com': /^\/(crypto/analysis|opinion|education)/i,
+          'investing.com': /^\/(crypto\/analysis|opinion|education)/i,
           'seekingalpha.com': /^\/(opinions|opinion|blogs)/i,
           'finance.yahoo.com': /^\/(lifestyle|health|entertainment|style)/i,
           'apnews.com': /^\/(lifestyle|entertainment)/i,

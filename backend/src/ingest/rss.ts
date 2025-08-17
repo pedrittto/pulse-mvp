@@ -108,7 +108,7 @@ const generateThreadId = (primaryEntity: string | undefined, pubDate: string): s
 };
 
 // Normalize RSS item to NewsItem
-const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
+const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<NewsItem> => {
   const rawHeadline = item.title?.[0] || '';
   const rawDescription = item.description?.[0] || '';
   // const _link = item.link?.[0] || '';
@@ -145,7 +145,7 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
   });
 
   // Ensure all fields have safe values (no undefined)
-  const item = {
+  const newsItem = {
     id: generateArticleHash(headline, primaryEntity),
     thread_id: threadId,
     headline: headline,
@@ -172,19 +172,19 @@ const normalizeRSSItem = (item: RSSItem, sourceName: string): NewsItem => {
       const gate = isTradingRelevant(headline, description, domain);
       if (!gate.relevant) {
         const db = getDb();
-        const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(item.id);
-        await doc.set({ ...item, dropped_at: new Date().toISOString(), reason: gate.reason }, { merge: true });
+        const doc = db.collection('feeds_shadow').doc('trading_filter').collection('dropped').doc(newsItem.id);
+        await doc.set({ ...newsItem, dropped_at: new Date().toISOString(), reason: gate.reason }, { merge: true });
         // Signal to caller to skip persist
-        (item as any)._dropped = true;
+        (newsItem as any)._dropped = true;
       } else {
-        (item as any)._filter_reason = gate.reason;
+        (newsItem as any)._filter_reason = gate.reason;
       }
     } catch (e) {
       console.error('[filter][trading_only] shadow write failed:', e);
     }
   }
 
-  return item;
+  return newsItem;
 };
 
 // Fetch and parse RSS feed
@@ -322,6 +322,8 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
           if (item.category === 'macro') macroItems++;
         });
         
+        let addedCount = 0;
+        let skippedCount = 0;
         if ((sourceSet === 'crypto_v1' || process.env.INGEST_EXPANSION === '1') && auditMode) {
           // Dry-run: write to shadow collection
           try {
@@ -335,7 +337,9 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
               batch.set(ref, { ...item, shadow_at: new Date().toISOString(), source_set: shadowKey }, { merge: true });
             });
             await batch.commit();
-            totalAdded += items.length;
+            addedCount = items.length;
+            skippedCount = 0;
+            totalAdded += addedCount;
             console.log(`[shadow][${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}] wrote ${items.length} items to feeds_shadow/${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}`);
           } catch (e) {
             console.error('[shadow] failed to write shadow items:', e);
@@ -343,13 +347,15 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
           }
         } else {
           const { added, skipped } = await addNewsItems(items);
-          totalAdded += added;
-          totalSkipped += skipped;
+          addedCount = added;
+          skippedCount = skipped;
+          totalAdded += addedCount;
+          totalSkipped += skippedCount;
         }
         totalFetched += items.length;
         
-        console.log(`${feedName}: ${items.length} fetched, ${added} added, ${skipped} skipped`);
-        return { success: true, feedName, items: items.length, added, skipped };
+        console.log(`${feedName}: ${items.length} fetched, ${addedCount} added, ${skippedCount} skipped`);
+        return { success: true, feedName, items: items.length, added: addedCount, skipped: skippedCount };
       } else {
         console.error(`${feedName}: Failed to fetch - ${result.reason}`);
         totalErrors++;
