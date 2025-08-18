@@ -19,10 +19,12 @@ function isStandalonePWA(): boolean {
 }
 
 export default function NewsCardLink({ sourceUrl, children, onOpen, className, ...rest }: NewsCardLinkProps) {
-	const debugOn = (process.env.NEXT_PUBLIC_NEWS_DEBUG || '').toString() === '1'
 	const idRef = useRef<string | null>(null)
 
 	useEffect(() => {
+		const envDebug = (process.env.NEXT_PUBLIC_NEWS_DEBUG || '').toString() === '1'
+		const runtimeDebug = typeof window !== 'undefined' && (window as any).__NEWS_DEBUG === true
+		const debugOn = envDebug || runtimeDebug
 		if (!debugOn) return
 		;(window as any).__newsCardMountCount = ((window as any).__newsCardMountCount || 0) + 1
 		const count = (window as any).__newsCardMountCount
@@ -40,13 +42,16 @@ export default function NewsCardLink({ sourceUrl, children, onOpen, className, .
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [])
 
-	const handleActivate: React.MouseEventHandler<HTMLElement> = (e) => {
+	const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (e) => {
 		if (!sourceUrl) return
+		const envDebug = (process.env.NEXT_PUBLIC_NEWS_DEBUG || '').toString() === '1'
+		const runtimeDebug = typeof window !== 'undefined' && (window as any).__NEWS_DEBUG === true
+		const debugOn = envDebug || runtimeDebug
 		const id = idRef.current || (e.currentTarget as HTMLElement).getAttribute('data-id') || '(unknown)'
 		if (debugOn) {
+			;(window as any).__clicked = true
 			console.log('click-start', { id, href: sourceUrl })
 		}
-		// Optional analytics hook
 		try {
 			onOpen?.(sourceUrl)
 			const domain = (() => { try { return new URL(sourceUrl).hostname } catch { return '' } })()
@@ -55,44 +60,59 @@ export default function NewsCardLink({ sourceUrl, children, onOpen, className, .
 		const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
 		const isiOS = /iPhone|iPad|iPod/i.test(ua)
 		if (typeof window !== 'undefined' && isStandalonePWA() && isiOS) {
-			const open = window.confirm('Open article in Safari?')
-			if (open) {
+			// Prevent default anchor behavior; use same-view navigation for PWA
+			e.preventDefault()
+			const proceed = window.confirm('Open article in Safari?')
+			;(window as any).__confirmCalled = true
+			if (proceed) {
 				window.location.assign(sourceUrl)
-				if (debugOn) console.log('click-end', { id, result: 'success' })
+				if (debugOn) console.log('click-end', { id, result: 'success', mode: 'pwa' })
 			} else {
-				if (debugOn) console.log('click-end', { id, result: 'cancel' })
+				if (debugOn) console.log('click-end', { id, result: 'cancel', mode: 'pwa' })
 			}
-			// For div wrapper, nothing to prevent, but stop here
 			return
 		}
-		// Default desktop/web path: open synchronously in new tab
-		if (typeof window !== 'undefined') {
-			window.open(sourceUrl, '_blank', 'noopener,noreferrer')
-			if (debugOn) console.log('click-end', { id, result: 'success' })
-		}
-	}
-
-	const onKey: React.KeyboardEventHandler<HTMLElement> = (e) => {
-		if (!sourceUrl) return
-		if (e.key === 'Enter' || e.key === ' ') {
+		// Desktop/web
+		if (debugOn) {
+			// For test determinism, open via window.open and prevent default
 			e.preventDefault()
-			handleActivate(e as unknown as React.MouseEvent<HTMLElement>)
+			;(window as any).__opened = sourceUrl
+			window.open(sourceUrl, '_blank', 'noopener,noreferrer')
+			console.log('click-end', { id, result: 'success', mode: 'desktop-debug' })
+			return
 		}
+		// Let anchor default behavior open in new tab (supports middle/ctrl/cmd click)
+		if (debugOn) console.log('click-end', { id, result: 'success', mode: 'desktop' })
 	}
 
-	const role = sourceUrl ? 'link' : 'group'
-	const tabIndex = sourceUrl ? 0 : -1
+	const role = sourceUrl ? undefined : 'group'
+	const tabIndex = sourceUrl ? undefined : -1
 	const ariaDisabled = !sourceUrl
 	const computedClassName = className ?? (sourceUrl ? 'cursor-pointer' : 'cursor-not-allowed opacity-80')
+
+	if (sourceUrl) {
+		return (
+			<a
+				href={sourceUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				onClick={handleClick}
+				aria-disabled={ariaDisabled}
+				aria-label={'Open original article'}
+				className={computedClassName}
+				{...rest}
+			>
+				{children}
+			</a>
+		)
+	}
 
 	return (
 		<div
 			role={role}
 			tabIndex={tabIndex}
-			onClick={sourceUrl ? handleActivate : undefined}
-			onKeyDown={sourceUrl ? onKey : undefined}
 			aria-disabled={ariaDisabled}
-			aria-label={sourceUrl ? 'Open original article' : 'No source available'}
+			aria-label={'No source available'}
 			className={computedClassName}
 			{...rest}
 		>

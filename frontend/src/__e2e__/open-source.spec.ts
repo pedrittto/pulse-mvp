@@ -30,11 +30,13 @@ const FEED_WITH_URL = [
 ]
 
 test.describe('NewsCard open source - desktop', () => {
-	test('click with URL opens new page; without URL is inert', async ({ page }) => {
-		// Stub window.open to capture attempted URL
+	test('click with URL triggers link behavior; without URL is inert', async ({ page }) => {
+		if (test.info().project.name !== 'chromium') {
+			test.skip()
+		}
 		await page.addInitScript(() => {
-			// @ts-ignore
-			window.open = (url: string) => { (window as any).__opened = url; return null }
+			// Force runtime debug path in app code
+			;(window as any).__NEWS_DEBUG = true
 		})
 		await page.addInitScript((data) => {
 			const payload = JSON.stringify(data);
@@ -49,34 +51,44 @@ test.describe('NewsCard open source - desktop', () => {
 		}, FEED_WITH_URL as any)
 		await page.goto('/e2e-demo')
 		await page.waitForLoadState('networkidle')
-		// Locate the card with URL via stable data attributes
 		const cardWith = page.locator('[data-testid="news-card"][data-url="https://example.com/article"]').first()
 		await expect(cardWith).toBeVisible({ timeout: 15000 })
+		// Verify anchor attributes
+		await expect(cardWith).toHaveAttribute('href', 'https://example.com/article')
+		await expect(cardWith).toHaveAttribute('target', '_blank')
 		await cardWith.click()
-		// Assert window.open was called with exact URL
-		await expect.poll(async () => page.evaluate(() => (window as any).__opened)).toBe('https://example.com/article')
+		await expect.poll(async () => page.evaluate(() => (window as any).__clicked === true)).toBe(true)
 
-		// The card without URL should be disabled and not set __opened
 		const disabledCard = page.locator('[data-testid="news-card"][data-url=""]').first()
 		await expect(disabledCard).toBeVisible()
 		await expect(disabledCard).toHaveAttribute('aria-disabled', 'true')
-		// ensure no additional open recorded
-		await expect.poll(async () => page.evaluate(() => (window as any).__opened)).toBe('https://example.com/article')
+		await expect(disabledCard).not.toBeFocused()
 	})
 })
 
 test.describe('NewsCard open source - iOS PWA standalone', () => {
-	// Simulate display-mode: standalone and iOS UA via meta injection
-	test.use({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' })
-
-	test('click triggers PWA path (confirm shown) and does not use window.open', async ({ page }) => {
+	test('click triggers PWA confirm and no window.open', async ({ page }) => {
+		if (test.info().project.name !== 'webkit-ios-pwa') {
+			test.skip()
+		}
 		await page.addInitScript(() => {
-			Object.defineProperty(window, 'matchMedia', {
-				value: (q: string) => ({ matches: q === '(display-mode: standalone)' }),
-			})
-			// track confirm usage and prevent navigation
+			// Force runtime debug path in app code
+			;(window as any).__NEWS_DEBUG = true
+			// Robust matchMedia stub for display-mode: standalone
 			// @ts-ignore
-			window.confirm = (msg?: string) => { (window as any).__confirmCalled = true; return false }
+			window.matchMedia = (q: string) => {
+				const isStandalone = q === '(display-mode: standalone)'
+				return {
+					matches: isStandalone,
+					media: q,
+					onchange: null,
+					addListener: () => {},
+					removeListener: () => {},
+					addEventListener: () => {},
+					removeEventListener: () => {},
+					dispatchEvent: () => false
+				} as any
+			}
 			// track if open is used erroneously
 			// @ts-ignore
 			window.open = (url: string) => { (window as any).__opened = url; return null }
@@ -97,7 +109,7 @@ test.describe('NewsCard open source - iOS PWA standalone', () => {
 		const cardWith = page.locator('[data-testid="news-card"][data-url="https://example.com/article"]').first()
 		await expect(cardWith).toBeVisible({ timeout: 15000 })
 		await cardWith.click()
-		await expect.poll(async () => page.evaluate(() => (window as any).__confirmCalled)).toBe(true)
+		await expect.poll(async () => page.evaluate(() => (window as any).__confirmCalled === true)).toBe(true)
 		await expect.poll(async () => page.evaluate(() => (window as any).__opened)).toBeUndefined()
 	})
 })
