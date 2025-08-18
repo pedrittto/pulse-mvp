@@ -26,12 +26,32 @@ function normalizeItem(item: any) {
     confidenceState = n >= 90 ? 'confirmed' : n >= 75 ? 'verified' : n >= 50 ? 'corroborated' : n >= 25 ? 'reported' : 'unconfirmed';
   }
 
+  // Derive a stable sourceUrl from common backend shapes
+  let sourceUrl: string | null = null;
+  try {
+    const direct = item.url ?? item.link ?? item.source_url;
+    let candidate: any = direct;
+    if (!candidate && Array.isArray(item.sources)) {
+      const found = item.sources.find((s: any) => s && typeof s === 'object' && typeof s.url === 'string' && s.url.length > 0);
+      candidate = found?.url;
+    }
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      const u = new URL(candidate);
+      if (/^https?:$/i.test(u.protocol)) {
+        sourceUrl = u.toString();
+      }
+    }
+  } catch (_) {
+    sourceUrl = null;
+  }
+
   return {
     ...item,
     impactCategory,
     impactScore,
     verificationState,
     confidenceState,
+    sourceUrl,
   };
 }
 

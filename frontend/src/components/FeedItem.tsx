@@ -2,6 +2,7 @@ import { NewsItem } from '@/types'
 import ImpactBadge from './ImpactBadge'
 import ConfidenceBadge from './ConfidenceBadge'
 import HelpIcon from './HelpIcon'
+import NewsCardLink from './NewsCardLink'
 import { pickArrival, formatRelativeTime } from '@/lib/time'
 import { sentenceCase, shouldShowDescription } from '@/lib/text'
 import { config } from '@/lib/config'
@@ -46,7 +47,7 @@ function FeedItem({ item }: FeedItemProps) {
   // Verification badge not used for confidence display anymore
 
   return (
-    <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900 transition-colors p-4 shadow-lg shadow-black/20">
+    <NewsCardLink sourceUrl={(item as any).sourceUrl ?? null} className="rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900 transition-colors p-4 shadow-lg shadow-black/20">
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center flex-wrap gap-2 min-w-0">
           <span className="text-sm text-neutral-400 font-mono flex-shrink-0">
@@ -124,7 +125,7 @@ function FeedItem({ item }: FeedItemProps) {
           )}
         </div>
       </div>
-    </div>
+    </NewsCardLink>
   )
 }
 
