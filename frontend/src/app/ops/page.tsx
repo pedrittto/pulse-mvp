@@ -1,19 +1,43 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import useSWR from 'swr';
 import { API_BASE } from '../../lib/config';
 import { fetcher } from '../../lib/fetcher';
 
 interface MetricsData {
   ok: boolean;
-  last_run: string | null;
-  counts: {
-    fetched: number;
-    added: number;
-    skipped: number;
-    errors: number;
+  // Lightweight scheduler/ingest snapshots
+  last_rss_poll: string | null;
+  last_breaking_run: string | null;
+  last_enrichment_run: string | null;
+  scheduler_uptime_sec: number | null;
+  last_scheduler_tick: string | null;
+  next_poll_in_sec: number | null;
+  enrichment_queue_size: number | null;
+  stubs_waiting_gt_120s: number | null;
+  items_written_last_60m: number | null;
+  items_written_last_24h: number | null;
+  dropped_last_60m: number | null;
+  per_source: Record<string, unknown> | null;
+  flags: {
+    TRADING_ONLY_FILTER: string;
+    SOURCE_SET: string;
+    INGEST_EXPANSION: string;
+    IMPACT_MODE: string;
+    VERIFICATION_MODE: string;
+    BREAKING_MODE: string;
+    CONFIDENCE_CATEGORICAL_ONLY: string;
   };
+  // Optional sample confidence_state histogram
+  confidence_state?: {
+    unconfirmed: number;
+    reported: number;
+    corroborated: number;
+    verified: number;
+    confirmed: number;
+  };
+  // Aggregates
   feed_count: number | null;
   now: string;
 }
@@ -39,9 +63,16 @@ function formatRelativeTime(isoString: string | null): string {
 export default function OpsPage() {
   const [refreshInterval, setRefreshInterval] = useState(30000); // 30 seconds
   
-  const { data, error, isLoading, mutate } = useSWR<MetricsData>(
-    `${API_BASE}/metrics-lite`,
-    fetcher,
+  // Typed metrics fetcher
+  const fetchMetrics = async (url: string): Promise<MetricsData> => {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  };
+
+  const { data, error, isLoading, mutate } = useSWR<MetricsData, Error>(
+    () => `${API_BASE}/metrics-lite`,
+    fetchMetrics,
     {
       refreshInterval,
       revalidateOnFocus: false,
@@ -56,19 +87,35 @@ export default function OpsPage() {
     setRefreshInterval(prev => prev === 0 ? 30000 : 0);
   };
 
+  // Choose a best-effort last run timestamp from available fields
+  const lastRun: string | null = data?.last_rss_poll
+    ?? data?.last_enrichment_run
+    ?? data?.last_breaking_run
+    ?? null;
+
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-4xl mx-auto">
           <div className="bg-red-50 border border-red-200 rounded-lg p-6">
             <h1 className="text-xl font-semibold text-red-800 mb-2">Error Loading Metrics</h1>
-            <p className="text-red-600">Failed to load operational metrics. Please try again.</p>
+            <p className="text-red-600">Failed to load /metrics-lite. Showing skeleton. Please try again.</p>
             <button
               onClick={handleRefresh}
               className="mt-4 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
             >
               Retry
             </button>
+          </div>
+
+          {/* Skeleton grid */}
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {Array.from({ length: 8 }).map((_, idx) => (
+              <div key={idx} className="bg-white rounded-lg shadow-sm border p-6 animate-pulse">
+                <div className="h-3 w-24 bg-gray-200 rounded mb-3"></div>
+                <div className="h-6 w-32 bg-gray-200 rounded"></div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -114,10 +161,10 @@ export default function OpsPage() {
             </h3>
             <div className="space-y-1">
               <p className="text-2xl font-bold text-gray-900">
-                {data?.last_run ? formatRelativeTime(data.last_run) : 'Never'}
+                {lastRun ? formatRelativeTime(lastRun) : 'Never'}
               </p>
               <p className="text-xs text-gray-500">
-                {data?.last_run || 'No data available'}
+                {lastRun || 'No data available'}
               </p>
             </div>
           </div>
@@ -132,13 +179,13 @@ export default function OpsPage() {
             </p>
           </div>
 
-          {/* Fetched */}
+          {/* Fetched (fallback to N/A when not provided) */}
           <div className="bg-white rounded-lg shadow-sm border p-6">
             <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">
               Fetched
             </h3>
             <p className="text-2xl font-bold text-blue-600">
-              {data?.counts?.fetched?.toLocaleString() || '0'}
+              {typeof (data as any)?.counts?.fetched === 'number' ? (data as any).counts.fetched.toLocaleString() : 'N/A'}
             </p>
           </div>
 
@@ -148,7 +195,7 @@ export default function OpsPage() {
               Added
             </h3>
             <p className="text-2xl font-bold text-green-600">
-              {data?.counts?.added?.toLocaleString() || '0'}
+              {typeof (data as any)?.counts?.added === 'number' ? (data as any).counts.added.toLocaleString() : 'N/A'}
             </p>
           </div>
 
@@ -158,7 +205,7 @@ export default function OpsPage() {
               Skipped
             </h3>
             <p className="text-2xl font-bold text-yellow-600">
-              {data?.counts?.skipped?.toLocaleString() || '0'}
+              {typeof (data as any)?.counts?.skipped === 'number' ? (data as any).counts.skipped.toLocaleString() : 'N/A'}
             </p>
           </div>
 
@@ -168,7 +215,7 @@ export default function OpsPage() {
               Errors
             </h3>
             <p className="text-2xl font-bold text-red-600">
-              {data?.counts?.errors?.toLocaleString() || '0'}
+              {typeof (data as any)?.counts?.errors === 'number' ? (data as any).counts.errors.toLocaleString() : 'N/A'}
             </p>
           </div>
 
