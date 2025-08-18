@@ -6,7 +6,7 @@ type NewsCardLinkProps = {
 	children: React.ReactNode
 	onOpen?: (url: string) => void
 	className?: string
-}
+} & React.HTMLAttributes<HTMLDivElement>
 
 function isStandalonePWA(): boolean {
 	if (typeof window === 'undefined') return false
@@ -16,23 +16,29 @@ function isStandalonePWA(): boolean {
 	return Boolean(mm || iosStandalone)
 }
 
-export default function NewsCardLink({ sourceUrl, children, onOpen, className }: NewsCardLinkProps) {
+export default function NewsCardLink({ sourceUrl, children, onOpen, className, ...rest }: NewsCardLinkProps) {
 	const handleActivate: React.MouseEventHandler<HTMLDivElement> = (e) => {
 		if (!sourceUrl) return
 		// Optional analytics hook
-		onOpen?.(sourceUrl)
+		try {
+			onOpen?.(sourceUrl)
+			const domain = (() => { try { return new URL(sourceUrl).hostname } catch { return '' } })()
+			console.info('open_source_clicked', { domain, success: true })
+		} catch {}
 		const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
 		const isiOS = /iPhone|iPad|iPod/i.test(ua)
-		if (isStandalonePWA() && isiOS) {
+		if (typeof window !== 'undefined' && isStandalonePWA() && isiOS) {
 			// Minimal confirmation sheet; replace with app modal system if needed
-			const open = typeof window !== 'undefined' ? window.confirm('Open article in Safari?') : false
+			const open = window.confirm('Open article in Safari?')
 			if (open) {
 				window.location.assign(sourceUrl)
 			}
 			return
 		}
 		// Default: open in new tab with security flags
-		window.open(sourceUrl, '_blank', 'noopener,noreferrer')
+		if (typeof window !== 'undefined') {
+			window.open(sourceUrl, '_blank', 'noopener,noreferrer')
+		}
 	}
 
 	const onKey: React.KeyboardEventHandler<HTMLDivElement> = (e) => {
@@ -56,6 +62,7 @@ export default function NewsCardLink({ sourceUrl, children, onOpen, className }:
 			aria-disabled={ariaDisabled}
 			aria-label={sourceUrl ? 'Open original article' : 'No source available'}
 			className={className ?? (sourceUrl ? 'cursor-pointer' : 'cursor-not-allowed opacity-80')}
+			{...rest}
 		>
 			{children}
 		</div>

@@ -38,6 +38,14 @@ function normalizeItem(item: any) {
     if (typeof candidate === 'string' && candidate.length > 0) {
       const u = new URL(candidate);
       if (/^https?:$/i.test(u.protocol)) {
+        // Remove common tracker params
+        const toRemove: string[] = [];
+        u.searchParams.forEach((_, key) => {
+          if (/^utm_/i.test(key) || /^(ref|fbclid)$/i.test(key)) {
+            toRemove.push(key);
+          }
+        });
+        toRemove.forEach(k => u.searchParams.delete(k));
         sourceUrl = u.toString();
       }
     }
