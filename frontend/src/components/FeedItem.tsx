@@ -51,6 +51,7 @@ function FeedItem({ item }: FeedItemProps) {
       sourceUrl={(item as any).sourceUrl ?? null}
       className="rounded-2xl border border-neutral-800 bg-neutral-900/60 hover:bg-neutral-900 transition-colors p-4 shadow-lg shadow-black/20"
       data-testid="news-card"
+      data-id={item.id}
       data-url={(item as any).sourceUrl ?? ''}
     >
       <div className="flex items-start justify-between mb-2">
