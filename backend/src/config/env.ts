@@ -37,8 +37,8 @@ const loadConfig = () => {
     // Firebase configuration
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
     
-    // Cron configuration
-    cronSchedule: process.env.CRON_SCHEDULE || '*/3 * * * *'
+    // Cron configuration (default: every 1 minute)
+    cronSchedule: process.env.CRON_SCHEDULE || '*/1 * * * *'
   };
 
   // Validate required configuration
@@ -46,7 +46,11 @@ const loadConfig = () => {
   const missingFields = requiredFields.filter(field => !config[field as keyof typeof config]);
   
   if (missingFields.length > 0) {
-    throw new Error(`Missing required environment variables: ${missingFields.join(', ')}`);
+    // Allow skipping strict validation when using mock Firestore or in development
+    const allow = process.env.USE_FAKE_FIRESTORE === '1' || (process.env.NODE_ENV !== 'production');
+    if (!allow) {
+      throw new Error(`Missing required environment variables: ${missingFields.join(', ')}`);
+    }
   }
 
   return config;

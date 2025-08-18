@@ -10,6 +10,7 @@ import { isTradingRelevant } from '../utils/tradingFilter';
 import { getDb } from '../lib/firestore';
 import { cryptoFeeds } from '../config/cryptoFeeds';
 import { expansionFeeds } from '../config/expansionFeeds';
+import { getConfig } from '../config/env';
 
 const parseXML = promisify(parseString);
 
@@ -34,6 +35,71 @@ interface RSSFeed {
   rss?: {
     channel?: RSSChannel[];
   };
+}
+
+// Minimal Atom support for feeds like The Verge
+interface AtomLink { $?: { href?: string } }
+interface AtomEntry {
+  title?: string[];
+  summary?: string[];
+  link?: AtomLink[];
+  updated?: string[];
+  published?: string[];
+}
+interface AtomFeedDoc { feed?: { entry?: AtomEntry[] } }
+// In-memory transport caches and counters for metrics
+const etags = new Map<string, string>();
+const lastModified = new Map<string, string>();
+
+// Helper: merge per-source metrics into system.ingest_status (no schema change)
+async function updatePerSourceIngestStatus(update: {
+  source: string;
+  fetched_at: string;
+  items_found: number;
+  added?: number;
+  skipped?: number;
+  error?: string;
+  timeout?: boolean;
+  last_item?: { published_at?: string; arrived_at?: string; publish_to_ingest_ms?: number };
+}): Promise<void> {
+  try {
+    const db = getDb();
+    const docRef = db.collection('system').doc('ingest_status');
+    const snap = await docRef.get();
+    const data = snap.exists ? (snap.data() as any) : {};
+    const per_source = data.per_source || {};
+    const prev = per_source[update.source] || {};
+
+    const error_count = prev.error_count || 0;
+    const timeout_count = prev.timeout_count || 0;
+    const added = (prev.added || 0) + (update.added || 0);
+    const skipped = (prev.skipped || 0) + (update.skipped || 0);
+
+    per_source[update.source] = {
+      ...prev,
+      last_run: update.fetched_at,
+      fetched_at: update.fetched_at,
+      last_success_at: (!update.error && !update.timeout) ? update.fetched_at : (prev.last_success_at || null),
+      items_found: update.items_found,
+      added,
+      skipped,
+      error_count: update.error ? error_count + 1 : error_count,
+      timeout_count: update.timeout ? timeout_count + 1 : timeout_count,
+      accepted_0: (update.items_found === 0) || ((update.added ?? 0) === 0),
+      last_item: update.last_item || prev.last_item || null,
+      configured: true
+    };
+
+    const payload = {
+      ...data,
+      last_rss_poll: update.fetched_at,
+      per_source
+    };
+
+    await docRef.set(payload, { merge: true });
+  } catch (err) {
+    console.error('[metrics] Failed to update per_source ingest_status:', err);
+  }
 }
 
 // Filtering rules for actionable market news
@@ -112,7 +178,12 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
   const rawHeadline = item.title?.[0] || '';
   const rawDescription = item.description?.[0] || '';
   // const _link = item.link?.[0] || '';
-  const pubDate = item.pubDate?.[0] || new Date().toISOString();
+  const rawPub = item.pubDate?.[0];
+  let pubDate = new Date().toISOString();
+  if (rawPub) {
+    const parsed = new Date(rawPub);
+    if (!isNaN(parsed.getTime())) pubDate = parsed.toISOString();
+  }
   
   // Extract primary entity first
   const primaryEntity = extractPrimaryEntity(rawHeadline, rawDescription);
@@ -165,6 +236,24 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
     category: score.tags?.includes('Macro') ? 'macro' : undefined
   } as any;
 
+  // Log latency metrics for RSS as well (publish -> ingest)
+  try {
+    const db = getDb();
+    const tPublishMs = Math.max(0, new Date(ingestedAt).getTime() - new Date(pubDate).getTime());
+    await db.collection('latency_metrics').add({
+      source: sourceName,
+      source_published_at: pubDate,
+      ingested_at: ingestedAt,
+      arrival_at: ingestedAt,
+      t_ingest_ms: tPublishMs,
+      t_publish_ms: tPublishMs,
+      timestamp: new Date().toISOString(),
+      transport: 'rss'
+    });
+  } catch (e) {
+    console.error('[rss][latency_metrics] write failed:', e);
+  }
+
   // Optional trading-only filter (shadow writes on non-relevant)
   if (process.env.TRADING_ONLY_FILTER === '1') {
     try {
@@ -188,38 +277,106 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
 };
 
 // Fetch and parse RSS feed
-const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
+export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
   try {
     console.log(`Fetching RSS feed: ${feed.name}`);
     
     // Create AbortController for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const totalTimeoutMs = Number(process.env.SOURCE_REQUEST_TIMEOUT_MS || getConfig().sourceRequestTimeoutMs || 8000);
+    const timeoutId = setTimeout(() => controller.abort(), totalTimeoutMs);
 
-    const response = await fetch(feed.url, {
-      headers: {
-        'User-Agent': 'Pulse-MVP-RSS-Ingestor/1.0'
-      },
-      signal: controller.signal
-    });
+    const headers: Record<string, string> = {
+      'User-Agent': process.env.RSS_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseRSS/1.0',
+      'Accept': 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.8'
+    };
+    if (process.env.RSS_TRANSPORT_V2 === '1') {
+      if (etags.has(feed.name)) headers['If-None-Match'] = etags.get(feed.name)!;
+      if (lastModified.has(feed.name)) headers['If-Modified-Since'] = lastModified.get(feed.name)!;
+    }
+
+    // Support alternates fallback (e.g., AP/Reuters) if primary yields no content
+    const urlsToTry: string[] = [feed.url, ...(((feed as any).alternates as string[] | undefined) || [])];
+    let response: any = null;
+    let responseText: string = '';
+
+    for (let i = 0; i < urlsToTry.length; i++) {
+      const attemptUrl = urlsToTry[i];
+      try {
+        response = await fetch(attemptUrl, {
+          headers,
+          redirect: 'follow',
+          signal: controller.signal
+        });
+        if (response && response.ok) {
+          responseText = await response.text();
+          if (responseText && responseText.length > 0) {
+            break;
+          }
+        }
+      } catch (err) {
+        if (i === urlsToTry.length - 1) throw err;
+      }
+    }
 
     clearTimeout(timeoutId);
+
+    if (process.env.RSS_TRANSPORT_V2 === '1') {
+      const et = response.headers.get('etag');
+      const lm = response.headers.get('last-modified');
+      if (et) etags.set(feed.name, et);
+      if (lm) lastModified.set(feed.name, lm);
+    }
+
+    if (response.status === 304) {
+      await updatePerSourceIngestStatus({
+        source: feed.name,
+        fetched_at: new Date().toISOString(),
+        items_found: 0
+      });
+      return [];
+    }
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const responseText = await response.text();
-    const parsed = await parseXML(responseText) as RSSFeed;
+    const parsed = await parseXML(responseText) as RSSFeed & AtomFeedDoc;
     const channel = parsed.rss?.channel?.[0];
     
-    if (!channel?.item) {
+    // If standard RSS is unavailable, try Atom format (e.g., The Verge)
+    let rawItems: RSSItem[] | null = null;
+    if (channel?.item) {
+      rawItems = channel.item;
+    } else if ((parsed as AtomFeedDoc)?.feed?.entry?.length) {
+      const entries = (parsed as AtomFeedDoc).feed!.entry!;
+      const toText = (v: any): string => {
+        if (v == null) return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+        if (typeof v === 'object' && typeof (v as any)._ === 'string') return String((v as any)._);
+        try { return String(v); } catch { return ''; }
+      };
+      rawItems = entries.map((e: AtomEntry) => ({
+        title: [toText(e.title?.[0])],
+        description: [toText(e.summary?.[0])],
+        link: e.link && e.link[0] && e.link[0].$ && e.link[0].$.href ? [String(e.link[0].$.href)] : [],
+        pubDate: e.published && e.published[0] ? [toText(e.published[0])] : (e.updated && e.updated[0] ? [toText(e.updated[0])] : [])
+      }));
+    }
+
+    if (!rawItems || rawItems.length === 0) {
       console.log(`No items found in ${feed.name}`);
+      await updatePerSourceIngestStatus({
+        source: feed.name,
+        fetched_at: new Date().toISOString(),
+        items_found: 0
+      });
       return [];
     }
 
     // Filter items before processing
-    const filteredItems = channel.item.filter(item => {
+    const filteredItems = rawItems.filter(item => {
       const title = item.title?.[0] || '';
       const description = item.description?.[0] || '';
       const category = item.category?.[0];
@@ -240,15 +397,39 @@ const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
       }
       items.push(normalized);
     }
-    console.log(`Parsed ${items.length} items from ${feed.name} (filtered from ${channel.item.length})`);
+    console.log(`Parsed ${items.length} items from ${feed.name} (filtered from ${rawItems.length})`);
+    const fetchedAtIso = new Date().toISOString();
+    const lastItem = items[0] || null;
+    await updatePerSourceIngestStatus({
+      source: feed.name,
+      fetched_at: fetchedAtIso,
+      items_found: items.length,
+      last_item: lastItem ? {
+        published_at: lastItem.published_at,
+        arrived_at: lastItem.ingested_at,
+        publish_to_ingest_ms: (new Date(lastItem.ingested_at).getTime() - new Date(lastItem.published_at).getTime())
+      } : undefined
+    });
     
     return items;
   } catch (error) {
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
         console.error(`Error fetching ${feed.name}: Request timeout`);
+        await updatePerSourceIngestStatus({
+          source: feed.name,
+          fetched_at: new Date().toISOString(),
+          items_found: 0,
+          timeout: true
+        });
       } else {
         console.error(`Error fetching ${feed.name}:`, error.message);
+        await updatePerSourceIngestStatus({
+          source: feed.name,
+          fetched_at: new Date().toISOString(),
+          items_found: 0,
+          error: error.message
+        });
       }
     } else {
       console.error(`Error fetching ${feed.name}: Unknown error`);
@@ -377,6 +558,7 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
     const db = getDb();
     const metricsData = {
       last_run: new Date().toISOString(),
+      last_rss_poll: new Date().toISOString(),
       counts: { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors }
     };
     

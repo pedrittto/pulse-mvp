@@ -4,7 +4,7 @@
   "description": "Pulse MVP Backend",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --watch src --exec \"ts-node src/index.ts\"",
+    "dev": "cross-env-shell nodemon --watch src --exec \"ts-node src/index.ts\"",
     "build": "rimraf dist && tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "backfill:facts": "ts-node --transpile-only scripts/backfillFacts.ts",
@@ -30,6 +30,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/supertest": "^6.0.3",
     "@types/xml2js": "^0.4.14",
+    "cross-env": "^7.0.3",
     "dotenv": "^17.2.1",
     "husky": "^9.1.7",
     "jest": "^30.0.5",

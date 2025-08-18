@@ -171,7 +171,7 @@ router.get('/debug/firestore-list', async (_req, res) => {
     }
 
     const items: any[] = [];
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       const data = doc.data();
       items.push({
         id: doc.id,
@@ -248,7 +248,7 @@ const purgeCollection = async (collectionName: string, limit: number = 500): Pro
     }
     
     const batch = db.batch();
-    snapshot.docs.forEach(doc => {
+    snapshot.docs.forEach((doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       batch.delete(doc.ref);
     });
     

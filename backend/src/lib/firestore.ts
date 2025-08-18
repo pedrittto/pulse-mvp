@@ -1,9 +1,21 @@
 import admin from "firebase-admin";
+import { createMockDb } from './mockFirestore';
 
-let db: FirebaseFirestore.Firestore | null = null;
+let db: any | null = null;
 
 export function getDb() {
   if (db) return db;
+
+  // Allow local dev without real credentials
+  // In non-production, default to mock unless explicitly configured
+  const fakeFlag = process.env.FAKE_FIRESTORE === '1' || process.env.USE_FAKE_FIRESTORE === '1';
+  if (
+    fakeFlag || (process.env.NODE_ENV !== 'production')
+  ) {
+    console.log('[firestore] MOCK_DB_ACTIVE', { reason: fakeFlag ? 'FAKE_FIRESTORE' : 'non-production' });
+    db = createMockDb();
+    return db;
+  }
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;

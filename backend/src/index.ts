@@ -147,8 +147,18 @@ app.use('*', (_req, res) => {
 
 // Start server only if this is the main module (not when imported for testing)
 if (require.main === module) {
-  const server = app.listen(port, () => {
-    console.log(`[server] listening on ${port}`);
+  // Global error handlers to avoid silent failures
+  process.on('unhandledRejection', (reason: any) => {
+    console.error('[server] UNHANDLED_REJECTION', reason instanceof Error ? reason.stack || reason.message : reason);
+    process.exit(1);
+  });
+  process.on('uncaughtException', (err: any) => {
+    console.error('[server] UNCAUGHT_EXCEPTION', err instanceof Error ? err.stack || err.message : err);
+    process.exit(1);
+  });
+
+  const server = app.listen(port, '0.0.0.0', () => {
+    console.log('LISTENING', { port });
     
     // Log admin diagnostics
     logAdminDiagnostics();

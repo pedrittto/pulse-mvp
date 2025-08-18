@@ -414,7 +414,7 @@ export const getSourceLatencyStats = async (source: string, hours: number = 24):
     
     const publishTimes: number[] = [];
     
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc: any) => {
       const data = doc.data();
       if (data.t_publish_ms) {
         publishTimes.push(data.t_publish_ms);

@@ -41,6 +41,81 @@ router.get('/metrics-lite', async (_req, res) => {
 
     const per_source = ingestStatus?.per_source ?? null;
 
+    // Compute simple latency percentiles per source (publish_to_ingest_ms) if present
+    let latency: Record<string, { p50: number; p90: number; count: number; p50_h: string; p90_h: string }> | null = null;
+    try {
+      if (per_source && process.env.METRICS_LATENCY_SUMMARY !== '0') {
+        latency = {};
+        for (const [name, rec] of Object.entries<any>(per_source)) {
+          const samples: number[] = [];
+          // Try to read recent latency_metrics docs for this source (fast path best-effort)
+          try {
+            const windowMin = parseInt(process.env.METRICS_LATENCY_WINDOW_MIN || '60', 10);
+            const cutoffTs = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+            const snapshot = await db.collection('latency_metrics')
+              .where('source', '==', name)
+              .where('timestamp', '>=', cutoffTs)
+              .orderBy('timestamp', 'desc')
+              .limit(200)
+              .get();
+            snapshot.forEach((d: any) => {
+              const t = d.data().t_publish_ms;
+              if (typeof t === 'number' && t >= 0) samples.push(t);
+            });
+          } catch (_e) {
+            // Silent: collection may not exist; rely on per_source.last_item
+          }
+          if (!samples.length && rec?.last_item?.publish_to_ingest_ms) {
+            samples.push(rec.last_item.publish_to_ingest_ms);
+          }
+          if (samples.length) {
+            samples.sort((a, b) => a - b);
+            const p50 = samples[Math.floor(samples.length * 0.5)];
+            const p90 = samples[Math.floor(samples.length * 0.9)];
+            const fmt = (ms: number) => {
+              if (!Number.isFinite(ms) || ms < 0) return 'n/a';
+              const s = Math.floor(ms / 1000);
+              const m = Math.floor(s / 60);
+              const r = s % 60;
+              return `${m}m${r}s`;
+            };
+            latency[name] = { p50, p90, count: samples.length, p50_h: fmt(p50), p90_h: fmt(p90) };
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[metrics] latency summary failed:', e);
+    }
+
+    // Compute accepted_24h per source from latency_metrics
+    let perSourceWithAccepted: any = per_source;
+    try {
+      if (per_source) {
+        const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+        const out: Record<string, any> = {};
+        for (const [name, rec] of Object.entries<any>(per_source)) {
+          let count24h = 0;
+          try {
+            const snap = await db.collection('latency_metrics')
+              .where('source', '==', name)
+              .where('timestamp', '>=', cutoff)
+              .get();
+            // Mock and native both support forEach or docs
+            if (Array.isArray((snap as any).docs)) count24h = (snap as any).docs.length;
+            else if (typeof (snap as any).forEach === 'function') {
+              let c = 0; (snap as any).forEach((_d: any) => { c++; }); count24h = c;
+            }
+          } catch (_e) {
+            count24h = 0;
+          }
+          out[name] = { ...(rec as any), accepted_24h: count24h };
+        }
+        perSourceWithAccepted = out;
+      }
+    } catch (e) {
+      console.error('[metrics] accepted_24h computation failed:', e);
+    }
+
     // Optional scheduler diagnostics if stored by scheduler
     const scheduler_uptime_sec = ingestStatus?.scheduler_uptime_sec ?? null;
     const last_scheduler_tick = ingestStatus?.last_scheduler_tick ?? null;
@@ -86,8 +161,8 @@ router.get('/metrics-lite', async (_req, res) => {
 
       if (!recentDocs.empty) {
         const states = recentDocs.docs
-          .map(doc => doc.data().confidence_state)
-          .filter((s): s is string => typeof s === 'string' && s.length > 0);
+          .map((doc: any) => doc.data().confidence_state)
+          .filter((s: any): s is string => typeof s === 'string' && s.length > 0);
         confidenceStateMetrics = computeConfidenceStateMetrics(states);
       }
     } catch (error) {
@@ -108,11 +183,12 @@ router.get('/metrics-lite', async (_req, res) => {
       items_written_last_60m,
       items_written_last_24h,
       dropped_last_60m,
-      per_source,
+      per_source: perSourceWithAccepted,
       flags,
       feed_count: feedCount,
       now: new Date().toISOString(),
-      ...(confidenceStateMetrics && { confidence_state: confidenceStateMetrics })
+      ...(confidenceStateMetrics && { confidence_state: confidenceStateMetrics }),
+      ...(latency && { latency })
     };
     
     res.json(response);

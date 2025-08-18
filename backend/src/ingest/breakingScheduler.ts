@@ -1,6 +1,8 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { publishStub, enrichItem } from './breakingIngest';
+import { rssFeeds } from '../config/rssFeeds';
+import { expansionFeeds } from '../config/expansionFeeds';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -89,7 +91,10 @@ class BreakingScheduler {
   private backoffStates: Map<string, BackoffState> = new Map();
   private lastFetchTimes: Map<string, number> = new Map();
   private lastOkTimes: Map<string, number> = new Map();
+  private lastActiveTimes: Map<string, number> = new Map();
   private configReloadInterval: NodeJS.Timeout | null = null;
+  private activeFetches = 0;
+  private maxConcurrent = parseInt(process.env.RSS_PARALLEL || '6', 10);
 
   constructor() {
     this.config = this.loadBreakingConfig();
@@ -103,25 +108,64 @@ class BreakingScheduler {
     try {
       const configPath = path.join(__dirname, '../config/breaking-sources.json');
       if (!fs.existsSync(configPath)) {
-        log('warn', 'Breaking sources config file not found, using default empty config');
-        return {
-          sources: [],
-          default_interval_ms: 120000,
-          watchlist_interval_ms: 10000,
-          event_window_interval_ms: 5000
-        };
+        log('warn', 'Breaking sources config file not found, building defaults from rssFeeds');
+        return this.buildDefaultConfigFromRssFeeds();
       }
       const configData = fs.readFileSync(configPath, 'utf8');
-      return JSON.parse(configData);
+      const cfg = JSON.parse(configData) as BreakingConfig;
+      if (!cfg.sources || cfg.sources.length === 0) {
+        log('warn', 'Breaking sources config is empty, building defaults from rssFeeds');
+        return this.buildDefaultConfigFromRssFeeds();
+      }
+      return cfg;
     } catch (error) {
-      log('warn', 'Failed to load breaking sources config, using default empty config:', error);
-      return {
-        sources: [],
-        default_interval_ms: 120000,
-        watchlist_interval_ms: 10000,
-        event_window_interval_ms: 5000
-      };
+      log('warn', 'Failed to load breaking sources config, building defaults from rssFeeds:', error);
+      return this.buildDefaultConfigFromRssFeeds();
     }
+  }
+
+  // Build a default adaptive config from rssFeeds when RSS_ADAPTIVE=1 and no JSON config is present
+  private buildDefaultConfigFromRssFeeds(): BreakingConfig {
+    // Tiering by name
+    const tier1 = new Set<string>([
+      'Bloomberg Markets', 'Reuters Business', 'Financial Times', 'CNBC', 'AP Business'
+    ]);
+    // Optional per-source overrides from env: "Name=30000,Other=60000"
+    const rawOverrides = process.env.RSS_MIN_INTERVAL_OVERRIDES || '';
+    const envOverrides = new Map<string, number>();
+    rawOverrides.split(',').map(s => s.trim()).filter(Boolean).forEach(pair => {
+      const [k, v] = pair.split('=').map(x => x.trim());
+      const ms = parseInt(v || '', 10);
+      if (k && Number.isFinite(ms)) envOverrides.set(k, ms);
+    });
+
+    const allFeeds: Array<{ name: string; url: string; min_interval_sec?: number }> =
+      (process.env.INGEST_EXPANSION === '1') ? [...rssFeeds, ...expansionFeeds as any] : [...rssFeeds];
+
+    const sources: BreakingSource[] = allFeeds.map((f: any) => {
+      const tierDefaultMs = tier1.has(f.name) ? 60000 : 180000;
+      const fromConfigSec = Number.isFinite(f?.min_interval_sec) ? Math.max(1000, Math.floor(f.min_interval_sec * 1000)) : undefined;
+      let fromEnv = envOverrides.get(f.name);
+      if (fromEnv === undefined) {
+        for (const [key, val] of envOverrides.entries()) {
+          if (String(f.name).toLowerCase().includes(key.toLowerCase())) { fromEnv = val; break; }
+        }
+      }
+      const intervalMs = fromEnv ?? fromConfigSec ?? tierDefaultMs;
+      return {
+        name: f.name,
+        url: f.url,
+        interval_ms: intervalMs,
+        mode: 'breaking',
+        event_window: false
+      };
+    });
+    return {
+      sources,
+      default_interval_ms: 180000,
+      watchlist_interval_ms: 60000,
+      event_window_interval_ms: 5000
+    };
   }
 
   private loadEventWindowsConfig(): EventWindowsConfig {
@@ -160,15 +204,28 @@ class BreakingScheduler {
 
   // Get the appropriate interval for a source
   private getSourceInterval(source: BreakingSource): number {
+    const now = Date.now();
+    let interval = source.interval_ms || this.config.default_interval_ms;
+
+    // Activity-based boost: if produced >=1 item in last 10 min, poll at 30s for next 5 min
+    const lastActive = this.lastActiveTimes.get(source.name) || 0;
+    if (lastActive && (now - lastActive) <= (10 * 60 * 1000)) {
+      interval = Math.min(interval, 30000);
+    }
+
+    // Event window override
     if (this.isInEventWindow(source.name)) {
-      return this.config.event_window_interval_ms;
+      interval = Math.min(interval, this.config.event_window_interval_ms);
     }
-    
+
+    // Watchlist mode baseline
     if (source.mode === 'watchlist') {
-      return this.config.watchlist_interval_ms;
+      interval = Math.min(interval, this.config.watchlist_interval_ms);
     }
-    
-    return source.interval_ms || this.config.default_interval_ms;
+
+    // Jitter to avoid herd
+    const jitterMs = Math.floor(Math.random() * 500);
+    return Math.max(1000, interval + jitterMs);
   }
 
   // Apply exponential backoff
@@ -229,13 +286,19 @@ class BreakingScheduler {
 
   // Fetch RSS feed with error handling and backoff
   private async fetchRSSFeed(source: BreakingSource): Promise<any[]> {
+    // Simple concurrency guard
+    if (this.activeFetches >= this.maxConcurrent) {
+      setTimeout(() => this.scheduleSource(source), 500);
+      return [];
+    }
+    this.activeFetches++;
     const now = Date.now();
     this.lastFetchTimes.set(source.name, now);
 
     try {
       // Create AbortController for timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const response = await fetch(source.url, {
         headers: {
@@ -311,6 +374,9 @@ class BreakingScheduler {
         return [];
       }
     }
+    finally {
+      this.activeFetches = Math.max(0, this.activeFetches - 1);
+    }
   }
 
   // Process RSS items
@@ -339,6 +405,8 @@ class BreakingScheduler {
         });
 
         if (result.success) {
+          // Record activity for adaptive boost
+          this.lastActiveTimes.set(source.name, Date.now());
           // Schedule enrichment
           setTimeout(async () => {
             await enrichItem(result.id);

@@ -144,7 +144,7 @@ export const getNewsItems = async (limit: number = 20): Promise<NewsItem[]> => {
       .get();
     
     const items: NewsItem[] = [];
-    snapshot.forEach(doc => {
+    snapshot.forEach((doc: FirebaseFirestore.QueryDocumentSnapshot) => {
       const item = doc.data() as NewsItem;
       
       // Apply sanitization and fact composition as fallback for existing dirty data
