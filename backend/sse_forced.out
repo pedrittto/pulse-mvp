@@ -1,0 +1,16 @@
+[firestore] MOCK_DB_ACTIVE { reason: 'non-production' }
+[breaking][lanes] {
+  laneMaxBreaking: 10,
+  laneMaxDefault: 6,
+  maxConcurrent: 6,
+  fastlane: false
+}
+[boot][listen][error] {
+  code: 'EADDRINUSE',
+  message: 'listen EADDRINUSE: address already in use 0.0.0.0:4000',
+  stack: 'Error: listen EADDRINUSE: address already in use 0.0.0.0:4000\n' +
+    '    at Server.setupListenHandle [as _listen2] (node:net:1940:16)\n' +
+    '    at listenInCluster (node:net:1997:12)\n' +
+    '    at node:net:2206:7\n' +
+    '    at processTicksAndRejections (node:internal/process/task_queues:90:21)'
+}

@@ -4,6 +4,7 @@ import { sanitizeText } from './utils/sanitize';
 import { scoreNews } from './utils/scoring';
 import { composeHeadline, composeSummary } from './utils/factComposer';
 import { isTradingRelevant } from './utils/tradingFilter';
+import { sseHub } from './realtime/sse';
 
 // Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
 const sanitizePayload = (payload: any): any => {
@@ -118,6 +119,8 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         primary_entity: safeItem.primary_entity,
         impact: safeItem.impact
       });
+      // Emit SSE event if enabled
+      try { sseHub.broadcastNewItem({ id: safeItem.id, ingested_at: safeItem.ingested_at }); } catch { /* ignore */ }
       added++;
     } catch (error) {
       console.error(`Error adding news item ${item.id}:`, error);

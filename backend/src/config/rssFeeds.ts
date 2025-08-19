@@ -34,6 +34,11 @@ export const rssFeeds = [
     category: 'business'
   },
   {
+    name: 'Business Wire',
+    url: 'https://www.businesswire.com/portal/site/home/news',
+    category: 'business'
+  },
+  {
     name: 'The Verge',
     url: 'https://www.theverge.com/rss/index.xml',
     category: 'tech'

@@ -14,6 +14,93 @@ import { getConfig } from '../config/env';
 
 const parseXML = promisify(parseString);
 
+// --- Helpers: Date parsing & URL sanitization ---
+const MONTHS = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+} as Record<string, number>;
+
+const TZ_ABBR: Record<string, number> = {
+  gmt: 0, utc: 0,
+  est: -5 * 60, edt: -4 * 60,
+  cst: -6 * 60, cdt: -5 * 60,
+  mst: -7 * 60, mdt: -6 * 60,
+  pst: -8 * 60, pdt: -7 * 60,
+};
+
+function pad(n: number) { return n < 10 ? '0' + n : String(n); }
+
+export function parseRssDateToIso(raw?: string): string | '' {
+  if (!raw || typeof raw !== 'string') return '';
+  const s = raw.trim();
+  const now = Date.now();
+  // ISO 8601 basic check
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?(Z|[+-]\d{2}:?\d{2})?$/);
+  if (iso) {
+    const y = Number(iso[1]); const m = Number(iso[2]); const d = Number(iso[3]);
+    const hh = Number(iso[4]); const mm = Number(iso[5]); const ss = iso[6] ? Number(iso[6]) : 0;
+    const tz = iso[7] || 'Z';
+    let offsetMin = 0;
+    if (tz !== 'Z') {
+      const m2 = tz.match(/^([+-])(\d{2}):?(\d{2})$/);
+      if (!m2) return '';
+      const sign = m2[1] === '-' ? -1 : 1;
+      offsetMin = sign * (Number(m2[2]) * 60 + Number(m2[3]));
+    }
+    // compute UTC timestamp
+    const utcMs = Date.UTC(y, m - 1, d, hh, mm, ss) - offsetMin * 60000;
+    if (!Number.isFinite(utcMs)) return '';
+    return new Date(utcMs).toISOString();
+  }
+  // RFC822/RFC1123: "Tue, 22 Aug 2023 15:34:00 GMT" or without day
+  const rfc = s.match(/^(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2,4})\s+(\d{2}):(\d{2})(?::(\d{2}))?\s+([A-Za-z]{3}|[+-]\d{4})$/);
+  if (rfc) {
+    const day = Number(rfc[1]);
+    const mon = MONTHS[(rfc[2] || '').toLowerCase()];
+    let year = Number(rfc[3]); if (year < 100) year += 2000;
+    const hh = Number(rfc[4]); const mm = Number(rfc[5]); const ss = rfc[6] ? Number(rfc[6]) : 0;
+    const zone = (rfc[7] || '').toLowerCase();
+    if (!Number.isFinite(mon)) return '';
+    let offsetMin = 0;
+    if (/^[+-]\d{4}$/.test(zone)) {
+      const sign = zone[0] === '-' ? -1 : 1;
+      const zh = Number(zone.slice(1, 3));
+      const zm = Number(zone.slice(3, 5));
+      offsetMin = sign * (zh * 60 + zm);
+    } else if (TZ_ABBR.hasOwnProperty(zone)) {
+      offsetMin = TZ_ABBR[zone];
+    } else {
+      // Unknown tz abbr → fail
+      return '';
+    }
+    const utcMs = Date.UTC(year, mon, day, hh, mm, ss) - offsetMin * 60000;
+    if (!Number.isFinite(utcMs)) return '';
+    return new Date(utcMs).toISOString();
+  }
+  // Give up
+  return '';
+}
+
+export function sanitizePublisherUrl(input?: string): string | '' {
+  if (!input) return '';
+  try {
+    const u = new URL(input);
+    // Prefer https scheme if available
+    if (u.protocol === 'http:') u.protocol = 'https:';
+    const toDelete: string[] = [];
+    u.searchParams.forEach((_v, k) => {
+      const kl = k.toLowerCase();
+      if (kl.startsWith('utm_') || kl === 'fbclid' || kl === 'ref') toDelete.push(k);
+    });
+    toDelete.forEach(k => u.searchParams.delete(k));
+    // Remove trailing ? if no params
+    u.search = u.searchParams.toString();
+    return u.toString();
+  } catch {
+    return input;
+  }
+}
+
 interface RSSItem {
   title?: string[];
   description?: string[];
@@ -177,13 +264,12 @@ const generateThreadId = (primaryEntity: string | undefined, pubDate: string): s
 const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<NewsItem> => {
   const rawHeadline = item.title?.[0] || '';
   const rawDescription = item.description?.[0] || '';
-  // const _link = item.link?.[0] || '';
+  const rawLink = item.link?.[0] || '';
+  const sourceUrl = sanitizePublisherUrl(rawLink);
   const rawPub = item.pubDate?.[0];
-  let pubDate = new Date().toISOString();
-  if (rawPub) {
-    const parsed = new Date(rawPub);
-    if (!isNaN(parsed.getTime())) pubDate = parsed.toISOString();
-  }
+  const parsedIso = parseRssDateToIso(rawPub);
+  // Keep empty string when parsing fails to include item but avoid latency stats
+  const pubDate = parsedIso || '';
   
   // Extract primary entity first
   const primaryEntity = extractPrimaryEntity(rawHeadline, rawDescription);
@@ -225,6 +311,7 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
     tickers: primaryEntity ? [primaryEntity] : [],
     published_at: pubDate,
     ingested_at: ingestedAt,
+    source_url: sourceUrl,
     impact: {
       score: score.impact_score,
       category: score.impact,
@@ -238,18 +325,21 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
 
   // Log latency metrics for RSS as well (publish -> ingest)
   try {
-    const db = getDb();
-    const tPublishMs = Math.max(0, new Date(ingestedAt).getTime() - new Date(pubDate).getTime());
-    await db.collection('latency_metrics').add({
-      source: sourceName,
-      source_published_at: pubDate,
-      ingested_at: ingestedAt,
-      arrival_at: ingestedAt,
-      t_ingest_ms: tPublishMs,
-      t_publish_ms: tPublishMs,
-      timestamp: new Date().toISOString(),
-      transport: 'rss'
-    });
+    if (pubDate) {
+      const db = getDb();
+      const pubMs = new Date(pubDate).getTime();
+      const tPublishMs = Math.max(0, new Date(ingestedAt).getTime() - pubMs);
+      await db.collection('latency_metrics').add({
+        source: sourceName,
+        source_published_at: pubDate,
+        ingested_at: ingestedAt,
+        arrival_at: ingestedAt,
+        t_ingest_ms: tPublishMs,
+        t_publish_ms: tPublishMs,
+        timestamp: new Date().toISOString(),
+        transport: 'rss_batch'
+      });
+    }
   } catch (e) {
     console.error('[rss][latency_metrics] write failed:', e);
   }
@@ -276,6 +366,11 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
   return newsItem;
 };
 
+// Tier-1 feeds for canary BulkWriter and tighter timeouts
+const tier1Feeds = new Set<string>([
+  'Bloomberg Markets', 'Reuters Business', 'Financial Times', 'CNBC', 'AP Business'
+]);
+
 // Fetch and parse RSS feed
 export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]> => {
   try {
@@ -283,14 +378,17 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
     
     // Create AbortController for timeout
     const controller = new AbortController();
-    const totalTimeoutMs = Number(process.env.SOURCE_REQUEST_TIMEOUT_MS || getConfig().sourceRequestTimeoutMs || 8000);
+    const isTier1 = tier1Feeds.has(feed.name);
+    const tier1Timeout = parseInt(process.env.TIER1_HTTP_TIMEOUT_MS || '3000', 10);
+    const defaultTimeout = Number(process.env.SOURCE_REQUEST_TIMEOUT_MS || getConfig().sourceRequestTimeoutMs || 8000);
+    const totalTimeoutMs = isTier1 ? tier1Timeout : defaultTimeout;
     const timeoutId = setTimeout(() => controller.abort(), totalTimeoutMs);
 
     const headers: Record<string, string> = {
       'User-Agent': process.env.RSS_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PulseRSS/1.0',
       'Accept': 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.8'
     };
-    if (process.env.RSS_TRANSPORT_V2 === '1') {
+    if (process.env.RSS_TRANSPORT_V2 !== '0') {
       if (etags.has(feed.name)) headers['If-None-Match'] = etags.get(feed.name)!;
       if (lastModified.has(feed.name)) headers['If-Modified-Since'] = lastModified.get(feed.name)!;
     }
@@ -321,11 +419,15 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
 
     clearTimeout(timeoutId);
 
-    if (process.env.RSS_TRANSPORT_V2 === '1') {
-      const et = response.headers.get('etag');
-      const lm = response.headers.get('last-modified');
-      if (et) etags.set(feed.name, et);
-      if (lm) lastModified.set(feed.name, lm);
+    if (process.env.RSS_TRANSPORT_V2 !== '0') {
+      const hdrs: any = (response as any).headers;
+      try {
+        const getFn = hdrs && typeof hdrs.get === 'function' ? hdrs.get.bind(hdrs) : null;
+        const et = getFn ? getFn('etag') : (hdrs?.etag ?? null);
+        const lm = getFn ? getFn('last-modified') : (hdrs?.['last-modified'] ?? hdrs?.lastModified ?? null);
+        if (et) etags.set(feed.name, et);
+        if (lm) lastModified.set(feed.name, lm);
+      } catch { /* ignore header parse issues in tests/mocks */ }
     }
 
     if (response.status === 304) {
@@ -334,6 +436,7 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
         fetched_at: new Date().toISOString(),
         items_found: 0
       });
+      console.log(`[rss] ${feed.name} 304 Not Modified (ETag/Last-Modified)`);
       return [];
     }
 
@@ -357,12 +460,22 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
         if (typeof v === 'object' && typeof (v as any)._ === 'string') return String((v as any)._);
         try { return String(v); } catch { return ''; }
       };
-      rawItems = entries.map((e: AtomEntry) => ({
-        title: [toText(e.title?.[0])],
-        description: [toText(e.summary?.[0])],
-        link: e.link && e.link[0] && e.link[0].$ && e.link[0].$.href ? [String(e.link[0].$.href)] : [],
-        pubDate: e.published && e.published[0] ? [toText(e.published[0])] : (e.updated && e.updated[0] ? [toText(e.updated[0])] : [])
-      }));
+      rawItems = entries.map((e: AtomEntry) => {
+        // Prefer <link rel="alternate" href="https://...">
+        let href = '';
+        if (Array.isArray(e.link)) {
+          const alt = e.link.find(l => l?.$ && (l.$ as any).rel === 'alternate' && String((l.$ as any).href || '').startsWith('https'))
+            || e.link.find(l => l?.$ && String((l.$ as any).href || '').startsWith('https'))
+            || e.link[0];
+          href = (alt && alt.$ && alt.$.href) ? String(alt.$.href) : '';
+        }
+        return {
+          title: [toText(e.title?.[0])],
+          description: [toText(e.summary?.[0])],
+          link: href ? [href] : [],
+          pubDate: e.published && e.published[0] ? [toText(e.published[0])] : (e.updated && e.updated[0] ? [toText(e.updated[0])] : [])
+        } as RSSItem;
+      });
     }
 
     if (!rawItems || rawItems.length === 0) {
@@ -442,7 +555,7 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
 export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number; skipped: number; errors: number }> => {
   console.log('Starting RSS ingestion...');
   const startTime = Date.now();
-  
+
   let totalFetched = 0;
   let totalAdded = 0;
   let totalSkipped = 0;
@@ -453,107 +566,119 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
   let highImpactItems = 0;
   let macroItems = 0;
 
-  // Feature flag to include crypto_v1 sources in DRY-RUN (shadow) mode
   const sourceSet = process.env.SOURCE_SET;
   const auditMode = process.env.AUDIT_MODE === '1';
 
-  // Fetch all feeds in parallel (base set)
-  const feedPromises: Promise<any[]>[] = rssFeeds.map(fetchRSSFeed);
-
-  // Optionally include crypto feeds (read-only ingest)
+  // Build feed list with optional expansion sets
+  const baseFeeds = [...rssFeeds];
   if (sourceSet === 'crypto_v1') {
     console.log('[ingest][crypto_v1] Enabled. Fetching crypto feeds...');
-    for (const feed of cryptoFeeds) {
-      feedPromises.push(fetchRSSFeed({ name: feed.name, url: feed.url } as any));
-    }
+    cryptoFeeds.forEach(f => baseFeeds.push({ name: f.name, url: f.url } as any));
   }
-
-  // Optionally include expansion feeds under INGEST_EXPANSION
   if (process.env.INGEST_EXPANSION === '1') {
     console.log('[ingest][expansion] Enabled. Fetching expansion feeds...');
-    for (const feed of expansionFeeds) {
-      feedPromises.push(fetchRSSFeed({ name: feed.name, url: feed.url } as any));
-    }
-  }
-  const results = await Promise.allSettled(feedPromises);
-
-  // Process results with concurrency limit for database operations (tune under expansion)
-  const concurrencyLimit = process.env.INGEST_EXPANSION === '1' ? 8 : 5;
-  const chunks: PromiseSettledResult<NewsItem[]>[][] = [];
-  for (let i = 0; i < results.length; i += concurrencyLimit) {
-    chunks.push(results.slice(i, i + concurrencyLimit));
+    expansionFeeds.forEach(f => baseFeeds.push({ name: f.name, url: f.url } as any));
   }
 
-  for (const chunk of chunks) {
-    const chunkPromises = chunk.map(async (result, index) => {
-      const actualIndex = chunks.indexOf(chunk) * concurrencyLimit + index;
-      const baseLen = rssFeeds.length;
-      const isCrypto = sourceSet === 'crypto_v1' && actualIndex >= baseLen;
-      const feedName = isCrypto ? cryptoFeeds[actualIndex - baseLen]?.name || 'crypto' : rssFeeds[actualIndex].name;
+  // Per-host/tier lanes: Tier-1 is separate and never blocked
+  const tier1 = baseFeeds.filter(f => tier1Feeds.has(f.name));
+  const normal = baseFeeds.filter(f => !tier1Feeds.has(f.name));
 
-      if (result.status === 'fulfilled') {
-        const items = result.value;
-        
-        // Count sanitized fields and scoring
-        items.forEach(item => {
-          if (item.headline && item.headline !== 'Untitled') cleanedHeadlines++;
-          if (item.why) cleanedDescriptions++;
-          scoredItems++;
-          if (item.impact?.category === 'H') highImpactItems++;
-          if (item.category === 'macro') macroItems++;
-        });
-        
-        let addedCount = 0;
-        let skippedCount = 0;
-        if ((sourceSet === 'crypto_v1' || process.env.INGEST_EXPANSION === '1') && auditMode) {
-          // Dry-run: write to shadow collection
-          try {
-            const db = getDb();
-            const batch = db.batch();
-            const shadowKey = (sourceSet === 'crypto_v1') ? 'crypto_v1' : 'expansion';
-            const shadow = db.collection('feeds_shadow').doc(shadowKey);
-            const sub = shadow.collection('items');
-            items.forEach(item => {
-              const ref = sub.doc(item.id);
-              batch.set(ref, { ...item, shadow_at: new Date().toISOString(), source_set: shadowKey }, { merge: true });
-            });
-            await batch.commit();
-            addedCount = items.length;
-            skippedCount = 0;
-            totalAdded += addedCount;
-            console.log(`[shadow][${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}] wrote ${items.length} items to feeds_shadow/${(sourceSet==='crypto_v1')?'crypto_v1':'expansion'}`);
-          } catch (e) {
-            console.error('[shadow] failed to write shadow items:', e);
-            totalErrors++;
-          }
-        } else {
-          const { added, skipped } = await addNewsItems(items);
-          addedCount = added;
-          skippedCount = skipped;
-          totalAdded += addedCount;
-          totalSkipped += skippedCount;
+  // Lane configs
+  const laneTier1Concurrency = parseInt(process.env.TIER1_CONCURRENCY || '6', 10);
+  const laneDefaultConcurrency = parseInt(process.env.DEFAULT_CONCURRENCY || '6', 10);
+
+  console.log('[ingest][lanes]', {
+    tier1_sources: tier1.length,
+    normal_sources: normal.length,
+    laneTier1Concurrency,
+    laneDefaultConcurrency
+  });
+
+  // Helper to process a lane with bounded concurrency, streaming results per feed
+  const processLane = async (feeds: Array<typeof rssFeeds[0]>, laneName: string, concurrency: number) => {
+    let active = 0;
+    let index = 0;
+    return new Promise<void>((resolve) => {
+      const scheduleNext = () => {
+        while (active < concurrency && index < feeds.length) {
+          const feed = feeds[index++];
+          active++;
+          (async () => {
+            try {
+              const items = await fetchRSSFeed(feed as any);
+              // Count fields/scoring per item
+              items.forEach(item => {
+                if (item.headline && item.headline !== 'Untitled') cleanedHeadlines++;
+                if (item.why) cleanedDescriptions++;
+                scoredItems++;
+                if (item.impact?.category === 'H') highImpactItems++;
+                if (item.category === 'macro') macroItems++;
+              });
+
+              // Write as we go; use BulkWriter for Tier-1 (canary under flag)
+              let addedCount = 0;
+              let skippedCount = 0;
+
+              const useBulkWriter = (laneName === 'tier1') && process.env.TIER1_BULKWRITER === '1';
+              if (useBulkWriter) {
+                const db = getDb();
+                // Emulate BulkWriter with batched writes of 200 per batch when using mock DB
+                const batchSize = parseInt(process.env.BULKWRITER_BATCH_SIZE || '200', 10);
+                const total = items.length;
+                console.log('[ingest][bulkwriter]', { lane: laneName, batchSize, total });
+                for (let i = 0; i < items.length; i += batchSize) {
+                  const slice = items.slice(i, i + batchSize);
+                  const batch = db.batch();
+                  const sub = db.collection('news');
+                  for (const item of slice) {
+                    const ref = sub.doc(item.id);
+                    batch.set(ref, item, { merge: true });
+                  }
+                  await batch.commit();
+                  console.log('[ingest][bulkwriter][commit]', { lane: laneName, size: slice.length });
+                }
+                addedCount = items.length;
+              } else {
+                const res = await addNewsItems(items);
+                addedCount = res.added;
+                skippedCount = res.skipped;
+              }
+
+              totalFetched += items.length;
+              totalAdded += addedCount;
+              totalSkipped += skippedCount;
+
+              console.log(`[lane:${laneName}] ${feed.name}: ${items.length} fetched, ${addedCount} added, ${skippedCount} skipped`);
+            } catch (err) {
+              console.error(`[lane:${laneName}] ${feed.name}: Failed -`, err);
+              totalErrors++;
+            } finally {
+              active--;
+              if (index < feeds.length) {
+                scheduleNext();
+              } else if (active === 0) {
+                resolve();
+              }
+            }
+          })();
         }
-        totalFetched += items.length;
-        
-        console.log(`${feedName}: ${items.length} fetched, ${addedCount} added, ${skippedCount} skipped`);
-        return { success: true, feedName, items: items.length, added: addedCount, skipped: skippedCount };
-      } else {
-        console.error(`${feedName}: Failed to fetch - ${result.reason}`);
-        totalErrors++;
-        return { success: false, feedName, error: result.reason };
-      }
+      };
+      scheduleNext();
     });
+  };
 
-    // Process chunk concurrently
-    await Promise.all(chunkPromises);
-  }
+  // Run lanes in parallel so a slow feed does not gate others
+  await Promise.all([
+    processLane(tier1, 'tier1', laneTier1Concurrency),
+    processLane(normal, 'default', laneDefaultConcurrency)
+  ]);
 
   const duration = Date.now() - startTime;
   console.log(`RSS ingestion completed in ${duration}ms: ${totalFetched} fetched, ${totalAdded} added, ${totalSkipped} skipped, ${totalErrors} errors`);
   console.log('[sanitize]', { cleaned_headlines: cleanedHeadlines, cleaned_descriptions: cleanedDescriptions });
   console.log('[score]', { added: totalAdded, with_high: highImpactItems, with_macro: macroItems });
-  
-  // Write metrics to Firestore
+
   try {
     const db = getDb();
     const metricsData = {
@@ -561,12 +686,11 @@ export const ingestRSSFeeds = async (): Promise<{ fetched: number; added: number
       last_rss_poll: new Date().toISOString(),
       counts: { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors }
     };
-    
     await db.collection('system').doc('ingest_status').set(metricsData, { merge: true });
     console.log('[metrics] Updated ingest_status');
   } catch (error) {
     console.error('[metrics] Failed to update ingest_status:', error);
   }
-  
+
   return { fetched: totalFetched, added: totalAdded, skipped: totalSkipped, errors: totalErrors };
 };

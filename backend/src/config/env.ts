@@ -38,7 +38,10 @@ const loadConfig = () => {
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID,
     
     // Cron configuration (default: every 1 minute)
-    cronSchedule: process.env.CRON_SCHEDULE || '*/1 * * * *'
+    cronSchedule: process.env.CRON_SCHEDULE || '*/1 * * * *',
+
+    // API instrumentation flags (safe defaults off)
+    apiLatencyHeaders: process.env.API_LATENCY_HEADERS === '1'
   };
 
   // Validate required configuration

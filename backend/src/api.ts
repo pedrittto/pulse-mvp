@@ -7,6 +7,8 @@ import { ingestRSSFeeds } from './ingest/rss';
 import { metrics } from './routes/metrics';
 import { adminRoutes } from './routes/admin';
 import { scoreNews } from './utils/scoring';
+import { getConfig } from './config/env';
+import { sseHub } from './realtime/sse';
 
 // Environment getter functions
 const getNodeEnv = () => process.env.NODE_ENV;
@@ -29,6 +31,47 @@ type WatchlistData = {
 export const getDbInstance = () => getDb();
 
 const router = express.Router();
+// SSE endpoint: emits minimal payload on new item writes (behind flag)
+router.get('/sse/new-items', (req, res) => {
+  if (process.env.SSE_ENABLED !== '1') {
+    return res.status(404).json({ ok: false, error: 'SSE disabled' });
+  }
+  // Disable compression for this route if a compression middleware is present
+  (res as any).set && res.set('Content-Encoding', 'identity');
+  sseHub.addClient(req, res);
+});
+
+// GET /feed/since?after=<ISO>&limit=50 - items with ingested_at > after (desc)
+router.get('/feed/since', async (req, res) => {
+  if (process.env.SSE_ENABLED !== '1') {
+    // Still allow when SSE disabled to support SWR fallback
+  }
+  try {
+    const after = String(req.query.after || '');
+    const limit = Math.min(parseInt(String(req.query.limit || '50'), 10) || 50, 200);
+    if (!after || isNaN(Date.parse(after))) {
+      return res.status(400).json({ ok: false, error: 'Invalid after param' });
+    }
+    const db = getDb();
+    const snap = await db.collection('news')
+      .orderBy('ingested_at', 'desc')
+      .limit(500)
+      .get();
+    const items: any[] = [];
+    snap.forEach((doc: any) => {
+      const data = doc.data();
+      if (data && data.ingested_at && Date.parse(data.ingested_at) > Date.parse(after)) {
+        items.push({ id: doc.id, ...data });
+      }
+    });
+    items.sort((a, b) => (Date.parse(b.ingested_at) - Date.parse(a.ingested_at)));
+    const limited = items.slice(0, limit);
+    return res.json({ items: limited, total: limited.length });
+  } catch (e) {
+    console.error('[api][feed/since] error', e);
+    return res.status(500).json({ ok: false, error: 'Internal error' });
+  }
+});
 
 // Rate limiter for watchlist endpoint
 const watchlistLimiter = rateLimit({
@@ -386,6 +429,46 @@ router.get('/admin/impact-explain', async (req, res) => {
   }
 });
 
+// Dev-only helper: seed latency_metrics for metrics/demotion/alerts sanity checks
+router.post('/admin/seed-latency', async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ ok: false, error: 'Forbidden in production' });
+    }
+    const {
+      source = 'CNBC Breaking',
+      count = 10,
+      pubMs = 60000,
+      pulseMs = 1000,
+      ageMin = 1,
+      futureSec = 0
+    } = (req.body || {});
+
+    const db = getDb();
+    const coll = db.collection('latency_metrics');
+    const now = Date.now();
+    for (let i = 0; i < Number(count); i++) {
+      const ts = new Date(now).toISOString();
+      let sp: string;
+      if (Number(futureSec) > 0) sp = new Date(now + Number(futureSec) * 1000).toISOString();
+      else sp = new Date(now - Number(ageMin) * 60 * 1000).toISOString();
+      const doc: any = {
+        source: String(source),
+        timestamp: ts,
+        source_published_at: sp,
+        t_publish_ms: Number(pubMs),
+        t_exposure_ms: Number(pulseMs),
+        transport: 'adaptive'
+      };
+      await coll.add(doc);
+    }
+    return res.json({ ok: true, seeded: Number(count), source });
+  } catch (e) {
+    console.error('[admin][seed-latency] error', e);
+    return res.status(500).json({ ok: false, error: (e as any)?.message || 'error' });
+  }
+});
+
 // Helper function to calculate detailed Impact breakdown
 function calculateImpactBreakdown(item: {
   headline?: string;
@@ -540,18 +623,33 @@ function calculateImpactBreakdown(item: {
 
 // GET /feed
 router.get('/feed', async (req, res) => {
+  // Instrumentation: request id + start time (behind env flag)
+  const latencyHeadersEnabled = process.env.API_LATENCY_HEADERS === '1';
+  const startNs = process.hrtime.bigint();
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  if (latencyHeadersEnabled) {
+    res.set('X-Request-Id', requestId);
+  }
   try {
     // Accept query params: filter, q, limit, after, debug
     const { filter, limit, debug } = req.query;
     
     // Validate query params (basic validation for now)
     if (filter && !['my', 'market-moving', 'macro', 'all'].includes(filter as string)) {
+      if (latencyHeadersEnabled) {
+        const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+        res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+      }
       return res.status(400).json({ 
         error: { message: 'Invalid filter. Must be one of: my, market-moving, macro, all' } 
       });
     }
     
     if (limit && (isNaN(Number(limit)) || Number(limit) < 1 || Number(limit) > 100)) {
+      if (latencyHeadersEnabled) {
+        const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+        res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+      }
       return res.status(400).json({ 
         error: { message: 'Invalid limit. Must be a number between 1 and 100' } 
       });
@@ -759,6 +857,23 @@ router.get('/feed', async (req, res) => {
       }
     }
     
+    // Set timing headers and log before responding
+    if (latencyHeadersEnabled) {
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+      console.log('[api][feed][timing]', {
+        requestId,
+        durationMs: Math.round(elapsedMs),
+        filter: filter || undefined,
+        limit: newsLimit,
+        items: items.length
+      });
+    } else {
+      // Always emit a concise info log for observability
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      console.log('[api][feed]', { durationMs: Math.round(elapsedMs), items: items.length });
+    }
+
     res.json({
       items,
       total: items.length
@@ -766,6 +881,10 @@ router.get('/feed', async (req, res) => {
     return;
   } catch (error) {
     console.error('Error in /feed endpoint:', error);
+    if (latencyHeadersEnabled) {
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+    }
     res.status(500).json({
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
@@ -922,6 +1041,79 @@ router.post('/watchlist', watchlistLimiter, async (req, res) => {
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
     return;
+  }
+});
+
+// GET /metrics-summary
+router.get('/metrics-summary', async (_req, res) => {
+  try {
+    const db = getDb();
+    const windowMin = parseInt(process.env.METRICS_LATENCY_WINDOW_MIN || '60', 10);
+    const since = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+    const snap = await db.collection('latency_metrics')
+      .where('timestamp', '>=', since)
+      .orderBy('timestamp', 'desc')
+      .limit(500)
+      .get();
+    const per: Record<string, { pub: number[]; pulse: number[] }> = {};
+    if (snap && Array.isArray((snap as any).docs)) {
+      (snap as any).docs.forEach((d: any) => {
+        const data = d.data();
+        const s = data.source as string;
+        if (!s) return;
+        per[s] = per[s] || { pub: [], pulse: [] };
+        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+      });
+    } else if (snap && typeof (snap as any).forEach === 'function') {
+      (snap as any).forEach((d: any) => {
+        const data = d.data();
+        const s = data.source as string;
+        if (!s) return;
+        per[s] = per[s] || { pub: [], pulse: [] };
+        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+      });
+    }
+    const p50 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.5)] : null;
+    const p90 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.9)] : null;
+    const bySource: any = {};
+    const pubAgg: number[] = []; const pulseAgg: number[] = [];
+    Object.entries(per).forEach(([k,v]) => {
+      const sp50 = p50(v.pub); const sp90 = p90(v.pub);
+      const xp50 = p50(v.pulse); const xp90 = p90(v.pulse);
+      bySource[k] = { publisher_p50: sp50, publisher_p90: sp90, pulse_p50: xp50, pulse_p90: xp90, samples: v.pub.length };
+      if (sp50 != null) pubAgg.push(sp50);
+      if (xp50 != null) pulseAgg.push(xp50);
+    });
+    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
+    const aggregate = { publisher: { p50: avg(pubAgg) }, pulse: { p50: avg(pulseAgg) } };
+    res.json({ ok: true, by_source: bySource, aggregate });
+  } catch (e) {
+    console.error('[metrics-summary] error:', e);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Dev helper: toggle runtime flags without restart (staging/dev only)
+router.post('/admin/flags', async (req, res) => {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(403).json({ ok: false, error: 'Forbidden in production' });
+    }
+    const body = req.body || {};
+    const allowed = ['BREAKING_AUTODEMOTE','PULSE_LATENCY_ALERTS','SSE_ENABLED','FASTLANE_ENABLED','SSE_MAX_CLIENTS_PER_IP','SSE_RING_SIZE'];
+    const changed: Record<string,string> = {};
+    for (const k of allowed) {
+      if (Object.prototype.hasOwnProperty.call(body, k)) {
+        process.env[k] = String(body[k]);
+        changed[k] = String(body[k]);
+      }
+    }
+    return res.json({ ok: true, changed });
+  } catch (e) {
+    console.error('[admin][flags] error', e);
+    return res.status(500).json({ ok: false });
   }
 });
 

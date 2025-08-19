@@ -1,0 +1,21 @@
+C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:859
+    return new TSError(diagnosticText, diagnosticCodes, diagnostics);
+           ^
+TSError: ⨯ Unable to compile TypeScript:
+src/routes/metrics.ts(128,36): error TS2304: Cannot find name 'publisherTimes'.
+src/routes/metrics.ts(129,33): error TS2304: Cannot find name 'publisherTimes'.
+src/routes/metrics.ts(130,36): error TS2304: Cannot find name 'exposureTimes'.
+src/routes/metrics.ts(131,33): error TS2304: Cannot find name 'exposureTimes'.
+
+    at createTSError (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:859:12)
+    at reportTSError (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:863:19)
+    at getOutput (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:1077:36)
+    at Object.compile (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:1433:41)
+    at Module.m._compile (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:1617:30)
+    at node:internal/modules/cjs/loader:1895:10
+    at Object.require.extensions.<computed> [as .ts] (C:\Users\piotr\Desktop\pulse-mvp\backend\node_modules\ts-node\src\index.ts:1621:12)
+    at Module.load (node:internal/modules/cjs/loader:1465:32)
+    at Function._load (node:internal/modules/cjs/loader:1282:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14) {
+  diagnosticCodes: [ 2304, 2304, 2304, 2304 ]
+}

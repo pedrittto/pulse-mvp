@@ -21,6 +21,29 @@ describe('API Debug Endpoint', () => {
     process.env = originalEnv;
   });
 
+  test('GET /feed includes timing headers when API_LATENCY_HEADERS=1', async () => {
+    process.env.API_LATENCY_HEADERS = '1';
+    const response = await request(app)
+      .get('/feed')
+      .query({ limit: '1' })
+      .expect(200);
+
+    // Should include new headers
+    expect(response.headers['x-request-id']).toBeDefined();
+    expect(response.headers['x-backend-duration-ms']).toBeDefined();
+  });
+
+  test('GET /feed does not include timing headers by default', async () => {
+    delete process.env.API_LATENCY_HEADERS;
+    const response = await request(app)
+      .get('/feed')
+      .query({ limit: '1' })
+      .expect(200);
+
+    expect(response.headers['x-request-id']).toBeUndefined();
+    expect(response.headers['x-backend-duration-ms']).toBeUndefined();
+  });
+
   test('GET /feed?debug=conf should return debug information for V2.2', async () => {
     const response = await request(app)
       .get('/feed')

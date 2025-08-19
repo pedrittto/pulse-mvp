@@ -10,6 +10,8 @@ import { startRSSIngestion, stopRSSIngestion } from './cron';
 import { breakingScheduler } from './ingest/breakingScheduler';
 import { getCurrentSourceStats, cleanupBreakingIngest } from './ingest/breakingIngest';
 import { logAdminDiagnostics } from './middleware/admin';
+import { sseHub } from './realtime/sse';
+import { startControlFeed, stopControlFeed } from './dev/controlFeed';
 
 const app = express();
 const port = getConfig().port;
@@ -91,8 +93,12 @@ app.get('/health', (_req, res) => {
     })
   };
 
+  const minMax = breakingScheduler.getMinMaxNextPollMs();
   res.json({ 
     ok: true,
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || '0.0.0',
+    node: process.version,
     timestamp: new Date().toISOString(),
     env: {
       NODE_ENV: getConfig().nodeEnv,
@@ -113,7 +119,28 @@ app.get('/health', (_req, res) => {
       breakingSourcesJson: getConfig().breakingSourcesJson ? 'configured' : 'not configured',
       eventWindowsJson: getConfig().eventWindowsJson ? 'configured' : 'not configured'
     },
-    breaking: breakingSnapshot
+    breaking: breakingSnapshot,
+    schedulers: {
+      adaptive: {
+        enabled: true,
+        running: breakingScheduler.getStatus().isRunning,
+        sources: breakingScheduler.getStatus().sources.length,
+        min_next_poll_ms: minMax.min,
+        max_next_poll_ms: minMax.max,
+        state_persisted: false
+      },
+      breaking: {
+        enabled: false,
+        running: false,
+        sources: 0,
+        min_next_poll_ms: null,
+        max_next_poll_ms: null,
+        state_persisted: false
+      }
+    },
+    sse: { clients: (process.env.SSE_ENABLED === '1') ? require('./realtime/sse').sseHub.getStats().clients : 0 },
+    breaking_demoted_sources: breakingScheduler.getDemotedSources(),
+    latency_alerts_active: breakingScheduler.isLatencyAlertActive()
   });
 });
 
@@ -147,6 +174,10 @@ app.use('*', (_req, res) => {
 
 // Start server only if this is the main module (not when imported for testing)
 if (require.main === module) {
+  // Allow forcing SSE on in non-production via an env override for verification
+  if (process.env.FORCE_SSE === '1') {
+    process.env.SSE_ENABLED = '1';
+  }
   // Global error handlers to avoid silent failures
   process.on('unhandledRejection', (reason: any) => {
     console.error('[server] UNHANDLED_REJECTION', reason instanceof Error ? reason.stack || reason.message : reason);
@@ -157,14 +188,22 @@ if (require.main === module) {
     process.exit(1);
   });
 
-  const server = app.listen(port, '0.0.0.0', () => {
-    console.log('LISTENING', { port });
+  const host = '0.0.0.0';
+  const server = app.listen(port, host, () => {
+    console.log(`[boot][listen] host=${host} port=${port} env=${process.env.NODE_ENV || ''} pid=${process.pid}`);
+    console.log('[flags]', {
+      adaptive_default: true,
+      transport_v2: process.env.RSS_TRANSPORT_V2 !== '0',
+      sse: process.env.SSE_ENABLED === '1'
+    });
     
     // Log admin diagnostics
     logAdminDiagnostics();
     
     // Start RSS ingestion cron job
     startRSSIngestion();
+    // Start control synthetic feed for dev/CI only
+    startControlFeed();
     if (process.env.SOURCE_SET === 'crypto_v1') {
       console.log('[server] SOURCE_SET=crypto_v1 enabled. AUDIT_MODE=%s', process.env.AUDIT_MODE === '1' ? 'ON' : 'OFF');
     }
@@ -176,18 +215,35 @@ if (require.main === module) {
     } else {
       console.log('[breaking] Breaking mode disabled (set BREAKING_MODE=1 to enable)');
     }
+    // Internal readiness probe to /health
+    const readyTimeout = setTimeout(() => {
+      console.error('[boot][ready][fail] timeout waiting for /health');
+      process.exit(1);
+    }, 3000);
+    (async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/health`);
+        if (res.ok) {
+          console.log('[boot][ready]');
+          clearTimeout(readyTimeout);
+        } else {
+          console.error('[boot][ready][fail] status=' + res.status);
+          clearTimeout(readyTimeout);
+          process.exit(1);
+        }
+      } catch (e: any) {
+        console.error('[boot][ready][fail] error=' + (e?.message || String(e)));
+        clearTimeout(readyTimeout);
+        process.exit(1);
+      }
+    })();
   });
 
-  // Handle port conflicts
+  // Handle port errors
   server.on('error', (err: any) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`[server] Port ${port} already in use. Is another server running?`);
-      console.error(`[server] To kill the process using port ${port}, run: npm run kill:4000`);
-      process.exit(1);
-    } else {
-      console.error('[server] Failed to start server:', err);
-      process.exit(1);
-    }
+    const code = err && err.code ? String(err.code) : 'UNKNOWN';
+    console.error('[boot][listen][error]', { code, message: err?.message, stack: err?.stack });
+    process.exit(1);
   });
 
   // Graceful shutdown handling
@@ -201,6 +257,7 @@ if (require.main === module) {
       // Cleanup all intervals and cron jobs
       cleanupBreakingIngest();
       stopRSSIngestion();
+      stopControlFeed();
       
       if (getConfig().breakingMode) {
         breakingScheduler.stop();
@@ -220,4 +277,6 @@ if (require.main === module) {
   // Register shutdown handlers
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGTERM', () => { try { sseHub.shutdown(); } catch {} });
+  process.on('SIGINT', () => { try { sseHub.shutdown(); } catch {} });
 }

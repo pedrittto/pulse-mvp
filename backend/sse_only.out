@@ -1,0 +1,1085 @@
+[firestore] MOCK_DB_ACTIVE { reason: 'non-production' }
+[breaking][lanes] {
+  laneMaxBreaking: 10,
+  laneMaxDefault: 6,
+  maxConcurrent: 6,
+  fastlane: false
+}
+[boot][listen] host=0.0.0.0 port=4000 env=development pid=22512
+[flags] { adaptive_default: true, transport_v2: true, sse: false }
+[admin] mode=enabled, schemes=["bearer","x-admin-token"], tokens=1 configured, allow_purge=false
+[rss] RSS_ADAPTIVE=1 enabled: delegating to breakingScheduler for adaptive polling
+[breaking][info] Starting breaking news scheduler
+[breaking] Breaking mode disabled (set BREAKING_MODE=1 to enable)
+[breaking][state] restored { etags: 0, lastModified: 0, backoffs: 0 }
+127.0.0.1 - - [19/Aug/2025:13:25:23 +0000] "GET /health HTTP/1.1" 200 1538 "-" "node"
+[boot][ready]
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: c8121e7813ec4cb236fe531f2db7ca150c67ac99 in 3ms {
+  title: "Silicon Valley's AI deals are creating zombie startups: 'You",
+  source: 'CNBC Breaking',
+  publish_time_ms: 3
+}
+[breaking][info] Stub published: 980745569d60193bdc5f1681f14265de70b6983e in 2ms {
+  title: "Bessent says interviews for 'incredible group' of potential ",
+  source: 'CNBC Breaking',
+  publish_time_ms: 2
+}
+[breaking][info] Stub published: b5db9051e9139c22593bb7f383360a3a763fd50e in 0ms {
+  title: "Trump promised Ukraine 'security guarantees': Here's what th",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: e4984d3c6a6b2b70f3e70e7fb49d5310cf61c066 in 1ms {
+  title: 'Best Buy launches third-party marketplace as it looks for sa',
+  source: 'CNBC Breaking',
+  publish_time_ms: 1
+}
+[breaking][info] Stub published: 92f59700cffcc3fd71a929dcb71939137cf50bb5 in 0ms {
+  title: 'Intel is getting a $2 billion investment from SoftBank',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: fff59da1901563fd7a281f60c8b648b6e39b7753 in 0ms {
+  title: "Tesla Optimus rival Unitree shines at the 'World Humanoid Ro",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 418a9a724bffb33229e33338599bc4f2d0a40752 in 0ms {
+  title: 'The key to being confident in an uncertain market, according',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 93a0eec7f4e2910311a61a00cf82e86fb377f84f in 0ms {
+  title: 'California legislature passes bill that gives interest on in',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 195bc03fe76eb6f9019228372d11fc894ba48fb6 in 0ms {
+  title: 'Palo Alto Networks reports earnings beat, says founder Nir Z',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 2d9bbd41fbac6c0ad388a2e105708be0d5edbae0 in 0ms {
+  title: '‘Coolcations’ are booming again as tourists prioritize quiet',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: e56bca8869ca65464c3b6d20da094db30f32de8a in 0ms {
+  title: 'American money pours into Europe’s soccer giants as club val',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: b0a873c724c4cdef44dd23168dbe7e164e5fb91d in 0ms {
+  title: '10 things to watch in the stock market Tuesday including Pal',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 51d24a0f600ef5127eed50089821f11595cbd3eb in 0ms {
+  title: 'Novo Nordisk offers diabetes drug Ozempic for less than half',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 64901161a945080dac6178b420bb9e67268ab6c1 in 0ms {
+  title: "When 'invest like the 1%' fails: How Yieldstreet's real esta",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 6340a02732fc58d9109abe82a761272bf2417c8d in 0ms {
+  title: 'Trump administration reportedly weighs 10% stake in Intel vi',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: e996a23487ffc02e4cb42c5a7da58f359b61676c in 0ms {
+  title: "Musk's Starlink suffers apparent outage as SpaceX launches m",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 74e508c9047cea3a351c501a6d31ed34c860d44c in 0ms {
+  title: 'How retail accounting could distort profitability as tariffs',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 3594e61026772fc1f25b45feea211a576b295fa6 in 0ms {
+  title: 'Shein reportedly weighs moving back to China in a bid for Ho',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 5bb45cbf57aa51aee3a6f89b4789e7bba56523bc in 0ms {
+  title: 'Bitcoin sinks to $115,000 after hitting its newest record, a',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 9910d6531c787d5786f4fa680d3670d72e31df24 in 0ms {
+  title: 'Working longer to afford retirement is a risky plan, economi',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: f30fcb5306e6dcd8cb7a65a4b21958378fb22897 in 0ms {
+  title: "OpenAI's Altman warns the U.S. is underestimating China's ne",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: d321f2892c72df29ed2ed7838da8bf616e44f520 in 0ms {
+  title: "'Job hugging' has replaced job-hopping, consultants say, as ",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 87c7c396e15c647463136e4a3243f910b23834e3 in 0ms {
+  title: 'TeraWulf stock gains more than 4% as Google boosts stake in ',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: d418796224aed1abbfe62ac9799d070f531a55dc in 0ms {
+  title: 'Google, Kairos Power plan advanced nuclear plant for Tenness',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 9ea8e8458e61aa98a7b9a69c7b96b6d8c23d46cd in 0ms {
+  title: "OpenAI's Sam Altman sees AI bubble forming as industry spend",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 1af22b07dc66f68efc59a0333048048b292d3873 in 0ms {
+  title: "Trump administration moves to 'prevent benefits' for some un",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: cba58762f3d0bf5f97a9f9e89071a0663c1385b1 in 0ms {
+  title: 'Novo Nordisk shares pop after Wegovy receives U.S. approval ',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 0bbba9fa6415655f6c82fd7e94ffcfb860e9d09c in 0ms {
+  title: 'Trump puts onus on Zelenskyy to end conflict with Russia ahe',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: a4c194e66cd03fcd578c563190c4fb1a99b828a8 in 0ms {
+  title: "China's EV industry is spending more on factories abroad tha",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 30a0e98414684e914f0cd9f07d092556bb193256 in 0ms {
+  title: "Modi gives tax boon to India's economy amid Trump tariff ten",
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: b8d8dc4215511ee27c5e0706e3d6e26e9119969f in 0ms {
+  title: 'Gold has crushed stocks, bonds and even bitcoin in 2025. Thi',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: a015fb722659e0c25e1f6c5cbf26f64ecdd602bc in 0ms {
+  title: 'Viking Therapeutics’ stock tumbles after results of oral wei',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 89d5f1b7c0d5ed21ae5ace2e83806d3752c44ede in 0ms {
+  title: 'European defense stocks in retreat. Ukraine peace could dera',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: f408c2e245315a5f8deb5b48c71dc98efe8ee162 in 0ms {
+  title: 'My wife and I are in our 50s and have $11 million. We’re not',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 309be83f4a823478d40cbd92a66a466ea0cefcad in 0ms {
+  title: 'Home Depot sees U.S. sales accelerate, suggesting home-impro',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: b88b48d2f9d70b1b86b38f2537b3856deddefab6 in 0ms {
+  title: 'My aunt barely spends any money. Will we receive the content',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: b5aef6dee86a7eb82306e07da77dbfb973f6281c in 0ms {
+  title: 'The Fed is the best defense against U.S. sovereign downgrade',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: e1505960f5c1e6aa2b33b37a5fa470022be1da5f in 0ms {
+  title: '‘I can only rely on me’: How do I protect myself from my par',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 6d9d4b8bf7aaf6879ffc5d28c9bc5af83707a742 in 0ms {
+  title: 'Chinese EV maker XPeng said it narrowed loss on record sales',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 1060e703c8138a45058800c67a96fcd8b27132aa in 0ms {
+  title: 'I’m single, 75, and living with kidney disease and a pacemak',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: b38b1552c69eb6444243d592b62ad051ebb42f1c in 2ms {
+  title: 'Retail Traders Ditch Crypto Holders on Dilution Fear',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 2
+}
+[breaking][info] Stub published: f08e04c9d739ba078bf51775d215a390a24a525e in 4ms {
+  title: 'IMF Visit to Weigh Hidden Debt in Senegal’s Bid for New Deal',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 4
+}
+[breaking][info] Stub published: 6ce2178337ca5f94abd65539f3a8c86d2c406ab8 in 1ms {
+  title: 'How Pimco Outmaneuvered Apollo, KKR to Win $29 Billion Meta ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 1
+}
+[breaking][info] Stub published: cd8782dd4c33378bef71cde53d63ebdb8d38c7a3 in 0ms {
+  title: 'Debt-Laden Tullow Holds Refinancing Talks With Bondholders',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 807eaa312f2b7e33501cfb07bf3a09977e1dac1f in 0ms {
+  title: 'Circle Bets on Its Own Blockchain in Challenge to Payment Gi',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 3e62f1bf8e4f18481a1ef152cd3cc776abe98c94 in 0ms {
+  title: 'US Housing Starts Climb to Five-Month High in July',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: a1c23b17cde12c1b78e3c1d34f0a4f68e229cb5d in 0ms {
+  title: 'Iran to Shut Banks, Public Offices for Long Weekend Due to H',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 1c2b78406d19f160330a601d00a2913ca1dc4d90 in 0ms {
+  title: 'Searing Heat in Japan to Persist for a Month, Boosting Power',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 38c65fc3a31098532bca5cb691074dad2296f002 in 0ms {
+  title: 'Oil Slips as Trump Ramps Up Diplomatic Push to End Ukraine W',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 0a73192d518f938a2fd35701fbdd7d182f15b9e4 in 1ms {
+  title: 'US Futures Waver as Retail Earnings Get Underway: Markets Wr',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 1
+}
+[breaking][info] Stub published: b639c996a1d5e3ba268d5249105a4ac44be541a7 in 0ms {
+  title: 'FX Market Lining Up to Overreact to Data: Kit Juckes',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: ca654138939933192e7a86e3c6ef3cb6e88b4b21 in 0ms {
+  title: 'Anglo Suffers Hit as Peabody Pulls Out of $3.8 Billion Coal ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 8cb655bcf3d32e8116bb930b1cb56653072caee3 in 0ms {
+  title: 'Black Hills to Buy NorthWestern Energy for $3.6 Billion',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 1d05b8828e0572181dad1eb38c89bc2d31f83e64 in 0ms {
+  title: 'Arabica Coffee Rises to Two-Month High on Adverse Brazil Wea',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 66dccf476abf3354da103aa0ade6206fdd70739a in 0ms {
+  title: 'Gilt Yields Hit Highest in Nearly Three Months Ahead of CPI',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 56b9bd780081bfdc838d440cfdcba9961ef90d2f in 0ms {
+  title: 'India Bond Volatility Jumps as Tax-Cut Plan Stokes Fiscal Wo',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 3236f3612e08f3e552ffe4a7f688fc48cbdfb823 in 0ms {
+  title: 'Trump’s Diplomacy Efforts Are Putting Oil Traders on Alert A',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 301a93222885232c5ac633d81cdb8ae4119b01ad in 0ms {
+  title: 'EU Fails in Bid to Add Joint Debt to Key Sovereign Index',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 2e87ab3901628fae589786b05c81d4387d30dfba in 1ms {
+  title: 'TPG Backs Tech Investing Firm Vanara Started by Former Emplo',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 1
+}
+[breaking][info] Stub published: 53c93bdc14b480014ebcc7d3944fab48a6fb0500 in 0ms {
+  title: 'Anchorage Raises $1.5 Billion for Credit Opportunities Fund',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: c68566fc0bf83a3f3d27838cb05aa9fb057dd244 in 0ms {
+  title: 'Kenya Domestic Debt Rates May Extend Weeks-Long Decline',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 9b5b457046869cfee36a858033a2ab914cd9d632 in 0ms {
+  title: 'Glencore Trader Who Led Ill-Fated Battery Recycling Push to ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 61bc98d80806b22503ff50afdde299a1c3a021c0 in 2ms {
+  title: 'Gold Inches Up as Traders Track US Diplomacy Before Jackson ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 2
+}
+[breaking][info] Stub published: cb4d9e8a8b9a0fb9f9f95c174c470525fe762289 in 0ms {
+  title: 'Home Depot Sales Miss Expectations on Soft Demand',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 4d51c0efd6d1ee45820f0f7650aecb837f342bee in 0ms {
+  title: 'Trump Tariffs Get Seal of Approval as S&amp;P Affirms Credit',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 10434728c91336cd6d266cb308d3ba121e84182e in 0ms {
+  title: 'BC Partners Launches New Fund to Lure Middle-Market Deals',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 9828f1a7b25b147294f79b4e404fe200621cf53d in 0ms {
+  title: 'Amazon Shares Lag Behind in Stock Market Obsessed With AI',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: e2ecf77cf794e74f7e548aa4bab5163195b1bb43 in 1ms {
+  title: 'Nvidia Preps New, More Powerful Chip for China: Reuters',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 1
+}
+[breaking][info] Stub published: 17c3e018ba3ab1463fffa9c9ad14fe5a12aca0cb in 0ms {
+  title: 'US, Europe Work on Ukraine Security; US Weighs 10% Stake in ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] Stub published: 503ce9379f4b42ff08938c41296a1ee282a478f2 in 0ms {
+  title: 'European Defense Stocks Slide on Push for Peace in Ukraine, ',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"Silicon Valley's Ai Deals Are Creating Zombie Star","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: c8121e7813ec4cb236fe531f2db7ca150c67ac99 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Bessent Interviews For 'incredible Group' Of Poten","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 980745569d60193bdc5f1681f14265de70b6983e {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Trump Promised Ukraine 'security Guarantees': Here","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: b5db9051e9139c22593bb7f383360a3a763fd50e {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Best Buy Launches Third-party Marketplace As It Lo","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: e4984d3c6a6b2b70f3e70e7fb49d5310cf61c066 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Intel Is Getting A $2 Billion Investment From Soft","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 92f59700cffcc3fd71a929dcb71939137cf50bb5 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Intel'
+}
+{"type":"verification_computed","headline":"Tesla Optimus Rival Unitree Shines At The 'world H","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: fff59da1901563fd7a281f60c8b648b6e39b7753 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Tesla'
+}
+{"type":"verification_computed","headline":"To Being Confident In An Uncertain Market,  A Cfp:","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 418a9a724bffb33229e33338599bc4f2d0a40752 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"California Legislature Passes Bill That Gives Inte","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 93a0eec7f4e2910311a61a00cf82e86fb377f84f {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Palo Alto Networks Reports Earnings Beat,  Founder","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 195bc03fe76eb6f9019228372d11fc894ba48fb6 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"‘coolcations’ Are Booming Again As Tourists Priori","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 2d9bbd41fbac6c0ad388a2e105708be0d5edbae0 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"American Money Pours Into Europe’s Soccer Giants A","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: e56bca8869ca65464c3b6d20da094db30f32de8a {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"10 Things To Watch In The Stock Market Tuesday Inc","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: b0a873c724c4cdef44dd23168dbe7e164e5fb91d {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Novo Nordisk Offers Diabetes Drug Ozempic For Less","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 51d24a0f600ef5127eed50089821f11595cbd3eb {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"When 'invest Like The 1%' Fails: How Yieldstreet's","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 64901161a945080dac6178b420bb9e67268ab6c1 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Intel According To Sources 10%","verification":"confirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 6340a02732fc58d9109abe82a761272bf2417c8d {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Intel'
+}
+{"type":"verification_computed","headline":"Musk's Starlink Suffers Apparent Outage As Spacex ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: e996a23487ffc02e4cb42c5a7da58f359b61676c {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"How Retail Accounting Could Distort Profitability ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 74e508c9047cea3a351c501a6d31ed34c860d44c {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"China According To Sources In China","verification":"confirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 3594e61026772fc1f25b45feea211a576b295fa6 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Bitcoin Sinks To $115,000 After Hitting Its Newest","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 5bb45cbf57aa51aee3a6f89b4789e7bba56523bc {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Working Longer To Afford Retirement Is A Risky Pla","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 9910d6531c787d5786f4fa680d3670d72e31df24 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Openai's Altman Warns The U.s. Is Underestimating ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: f30fcb5306e6dcd8cb7a65a4b21958378fb22897 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"'job Hugging' Has Replaced Job-hopping, Consultant","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: d321f2892c72df29ed2ed7838da8bf616e44f520 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Terawulf Stock Gains More Than 4% As Google Boosts","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 87c7c396e15c647463136e4a3243f910b23834e3 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Google'
+}
+{"type":"verification_computed","headline":"Google, Kairos Power Plan Advanced Nuclear Plant F","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: d418796224aed1abbfe62ac9799d070f531a55dc {
+  impact: 'L',
+  confidence_state: 'confirmed',
+  primary_entity: 'Google'
+}
+{"type":"verification_computed","headline":"Openai's Sam Altman Sees Ai Bubble Forming As Indu","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 9ea8e8458e61aa98a7b9a69c7b96b6d8c23d46cd {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Trump Administration Moves To 'prevent Benefits' F","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 1af22b07dc66f68efc59a0333048048b292d3873 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Novo Nordisk Shares Pop After Wegovy Receives U.s.","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: cba58762f3d0bf5f97a9f9e89071a0663c1385b1 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Trump Puts Onus On Zelenskyy To End Conflict With ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 0bbba9fa6415655f6c82fd7e94ffcfb860e9d09c {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"China's Ev Industry Is Spending More On Factories ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: a4c194e66cd03fcd578c563190c4fb1a99b828a8 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Modi Gives Tax Boon To India's Economy Amid Trump ","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 30a0e98414684e914f0cd9f07d092556bb193256 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Gold Has Crushed Stocks, Bonds And Even Bitcoin In","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: b8d8dc4215511ee27c5e0706e3d6e26e9119969f {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Viking Therapeutics’ Stock Tumbles After Results O","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: a015fb722659e0c25e1f6c5cbf26f64ecdd602bc {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"European Defense Stocks In Retreat. Ukraine Peace ","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: 89d5f1b7c0d5ed21ae5ace2e83806d3752c44ede {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"My Wife And I Are In Our 50s And Have $11 Million.","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: f408c2e245315a5f8deb5b48c71dc98efe8ee162 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Home Depot Sees U.s. Sales Accelerate, Suggesting ","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: 309be83f4a823478d40cbd92a66a466ea0cefcad {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"My Aunt Barely Spends Any Money. Will We Receive T","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: b88b48d2f9d70b1b86b38f2537b3856deddefab6 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Fed Is The Best Defense Against U.s. Sovereign Dow","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: b5aef6dee86a7eb82306e07da77dbfb973f6281c {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"‘i Can Only Rely On Me’: How Do I Protect Myself F","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: e1505960f5c1e6aa2b33b37a5fa470022be1da5f {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Chinese Ev Maker Xpeng  It Narrowed Loss On Record","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: 6d9d4b8bf7aaf6879ffc5d28c9bc5af83707a742 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"I’m Single, 75, And Living With Kidney Disease And","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: 1060e703c8138a45058800c67a96fcd8b27132aa {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Retail Traders Ditch Crypto Holders On Dilution Fe","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: b38b1552c69eb6444243d592b62ad051ebb42f1c {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Imf Visit To Weigh Hidden Debt In Senegal’s Bid Fo","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: f08e04c9d739ba078bf51775d215a390a24a525e {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"How Pimco Outmaneuvered Apollo, Kkr To Win $29 Bil","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 6ce2178337ca5f94abd65539f3a8c86d2c406ab8 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Meta'
+}
+{"type":"verification_computed","headline":"Debt-laden Tullow Holds Refinancing Talks With Bon","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: cd8782dd4c33378bef71cde53d63ebdb8d38c7a3 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Circle Bets On Its Own Blockchain In Challenge To ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 807eaa312f2b7e33501cfb07bf3a09977e1dac1f {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Us Housing Starts Climb To Five-month High In July","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 3e62f1bf8e4f18481a1ef152cd3cc776abe98c94 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Iran To Shut Banks, Public Offices For Long Weeken","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: a1c23b17cde12c1b78e3c1d34f0a4f68e229cb5d {
+  impact: 'M',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Searing Heat In Japan To Persist For A Month, Boos","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 1c2b78406d19f160330a601d00a2913ca1dc4d90 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Oil Slips As Trump Ramps Up Diplomatic Push To End","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 38c65fc3a31098532bca5cb691074dad2296f002 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Us Futures Waver As Retail Earnings Get Underway: ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 0a73192d518f938a2fd35701fbdd7d182f15b9e4 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Fx Market Lining Up To Overreact To Data: Kit Juck","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: b639c996a1d5e3ba268d5249105a4ac44be541a7 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Anglo Suffers Hit As Peabody Pulls Out Of $3.8 Bil","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: ca654138939933192e7a86e3c6ef3cb6e88b4b21 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Black Hills To Buy Northwestern Energy For $3.6 Bi","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 8cb655bcf3d32e8116bb930b1cb56653072caee3 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Arabica Coffee Rises To Two-month High On Adverse ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 1d05b8828e0572181dad1eb38c89bc2d31f83e64 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Gilt Yields Hit Highest In Nearly Three Months Ahe","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 66dccf476abf3354da103aa0ade6206fdd70739a {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"India Bond Volatility Jumps As Tax-cut Plan Stokes","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 56b9bd780081bfdc838d440cfdcba9961ef90d2f {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Trump’s Diplomacy Efforts Are Putting Oil Traders ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 3236f3612e08f3e552ffe4a7f688fc48cbdfb823 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Eu Fails In Bid To Add Joint Debt To  Sovereign In","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 301a93222885232c5ac633d81cdb8ae4119b01ad {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Tpg Backs Tech Investing Firm Vanara Started By Fo","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 2e87ab3901628fae589786b05c81d4387d30dfba {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Anchorage Raises $1.5 Billion For Credit Opportuni","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 53c93bdc14b480014ebcc7d3944fab48a6fb0500 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Kenya Domestic Debt Rates May Extend Weeks-long De","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: c68566fc0bf83a3f3d27838cb05aa9fb057dd244 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Glencore Trader Who Led Ill-fated Battery Recyclin","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 9b5b457046869cfee36a858033a2ab914cd9d632 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Gold Inches Up As Traders Track Us Diplomacy Befor","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 61bc98d80806b22503ff50afdde299a1c3a021c0 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Home Depot Sales Miss Expectations On Soft Demand","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: cb4d9e8a8b9a0fb9f9f95c174c470525fe762289 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Trump Tariffs Get Seal Of Approval As S&p Affirms ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 4d51c0efd6d1ee45820f0f7650aecb837f342bee {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Bc Partners Launches New Fund To Lure Middle-marke","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 10434728c91336cd6d266cb308d3ba121e84182e {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+{"type":"verification_computed","headline":"Amazon Shares Lag Behind In Stock Market Obsessed ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 9828f1a7b25b147294f79b4e404fe200621cf53d {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Amazon'
+}
+{"type":"verification_computed","headline":"Nvidia Preps New, More Powerful Chip For China: Re","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: e2ecf77cf794e74f7e548aa4bab5163195b1bb43 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Nvidia'
+}
+{"type":"verification_computed","headline":"Us, Europe Work On Ukraine Security; Us Weighs 10%","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 17c3e018ba3ab1463fffa9c9ad14fe5a12aca0cb {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Intel'
+}
+{"type":"verification_computed","headline":"European Defense Stocks Slide On Push For Peace In","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 503ce9379f4b42ff08938c41296a1ee282a478f2 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] CNBC Breaking: fetched=30 new=30 duplicate=120 errors=0 interval=60s
+[breaking][info] MarketWatch Breaking: fetched=10 new=10 duplicate=0 errors=0 interval=60s
+[breaking][info] Bloomberg Breaking: fetched=30 new=30 duplicate=90 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: 43bc4ccbbfd899d0bc3c77c84e473da2973a2b18 in 0ms {
+  title: 'Long End of the Curve ‘A Little Unanchored’: JPM’s Misra',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+{"type":"verification_computed","headline":"Long End Of The Curve ‘a Little Unanchored’: Jpm’s","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 43bc4ccbbfd899d0bc3c77c84e473da2973a2b18 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: d38f223f950e6e9685fecb489218b1dc0606afd0 in 0ms {
+  title: 'U.S. accuses India of profiteering from Russian oil',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"U.s. Accuses India Of Profiteering From Russian Oi","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: d38f223f950e6e9685fecb489218b1dc0606afd0 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] CNBC Breaking: fetched=1 new=1 duplicate=119 errors=0 interval=60s
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=89 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: 5b6bd8012f4d3578bdb340e1fa5a8f1c8dbc9af8 in 0ms {
+  title: 'U.S. accuses India of profiteering from Russian oil during U',
+  source: 'CNBC Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"U.s. Accuses India Of Profiteering From Russian Oi","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 5b6bd8012f4d3578bdb340e1fa5a8f1c8dbc9af8 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] CNBC Breaking: fetched=1 new=1 duplicate=119 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: b6ef4824b9e0f0c178ae62365149820db612cb81 in 0ms {
+  title: 'Treasury Yields Edge Lower as Fedspeak in Focus: Markets Wra',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+{"type":"verification_computed","headline":"Treasury Yields Edge Lower As Fedspeak In Focus: M","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: b6ef4824b9e0f0c178ae62365149820db612cb81 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=119 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: 8dc78c49bcb2fbad175621189cc531413b0a7344 in 0ms {
+  title: 'Anglian Water Sells Sterling Bond After Bids Top £1 Billion',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"Anglian Water Sells Sterling Bond After Bids Top £","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 8dc78c49bcb2fbad175621189cc531413b0a7344 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=89 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: 7525b0bf6c27af82f593fb7c9262f6389aa4ef8a in 1ms {
+  title: 'Viking Therapeutics shares fall more than 30% on disappointi',
+  source: 'CNBC Breaking',
+  publish_time_ms: 1
+}
+{"type":"verification_computed","headline":"Viking Therapeutics Shares Fall More Than 30% On D","verification":"unconfirmed","sources":["CNBC Breaking"]}
+[breaking][info] Enriched: 7525b0bf6c27af82f593fb7c9262f6389aa4ef8a {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] CNBC Breaking: fetched=1 new=1 duplicate=89 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Stub published: 66152da68e5554eef7f34a1c324b397557cd3a3b in 0ms {
+  title: 'How Pimco Outmaneuvered Apollo and KKR to Win $29 Billion Me',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"How Pimco Outmaneuvered Apollo And Kkr To Win $29 ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 66152da68e5554eef7f34a1c324b397557cd3a3b {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: 'Meta'
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=119 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Stub published: f2597393180c31af26ec0c8cf7d3e67f41470c5d in 0ms {
+  title: 'My stepmother’s lawyer called us ‘greedy’ for fighting for o',
+  source: 'MarketWatch Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"My Stepmother’s Lawyer Called Us ‘greedy’ For Figh","verification":"unconfirmed","sources":["MarketWatch Breaking"]}
+[breaking][info] Enriched: f2597393180c31af26ec0c8cf7d3e67f41470c5d {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] MarketWatch Breaking: fetched=1 new=1 duplicate=9 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Stub published: 492a08f38525b2b50ec7cde2adc09436a2ffc839 in 0ms {
+  title: 'US Stocks Fall as Investors Parse Retail Earnings, Await Pow',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"Us Stocks Fall As Investors Parse Retail Earnings,","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: 492a08f38525b2b50ec7cde2adc09436a2ffc839 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=89 errors=0 interval=60s
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][info] Stub published: ed6a17bc304000060ca6120e58e79ee6dba8d1d8 in 0ms {
+  title: 'Trump Expands Steel and Aluminum Tariffs to Include 400 More',
+  source: 'Bloomberg Breaking',
+  publish_time_ms: 0
+}
+{"type":"verification_computed","headline":"Trump Expands Steel And Aluminum Tariffs To Includ","verification":"unconfirmed","sources":["Bloomberg Breaking"]}
+[breaking][info] Enriched: ed6a17bc304000060ca6120e58e79ee6dba8d1d8 {
+  impact: 'L',
+  confidence_state: 'unconfirmed',
+  primary_entity: undefined
+}
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] Bloomberg Breaking: fetched=1 new=1 duplicate=119 errors=0 interval=60s
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified
+[breaking][error] Reuters Breaking: fetch failed
+[breaking][info] [304] MarketWatch Breaking: Not Modified

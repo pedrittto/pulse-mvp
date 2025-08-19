@@ -1,5 +1,6 @@
 import { NewsItem, Impact } from '../types';
 import { getDb } from '../lib/firestore';
+import { sseHub } from '../realtime/sse';
 import { generateArticleHash } from '../storage';
 import { scoreNews } from '../utils/scoring';
 import { composeHeadline, composeSummary } from '../utils/factComposer';
@@ -83,8 +84,10 @@ export const cleanupBreakingIngest = (): void => {
   }
 };
 
-// Start the stats interval
-startStatsInterval();
+// Start the stats interval (disabled in test to avoid open handle leaks)
+if (process.env.NODE_ENV !== 'test') {
+  startStatsInterval();
+}
 
 export interface BreakingStub {
   id: string;
@@ -108,8 +111,10 @@ export interface LatencyMetrics {
   source_published_at: string;
   ingested_at: string;
   arrival_at: string;
+  first_seen_at?: string;
   t_ingest_ms: number;
   t_publish_ms: number;
+  t_exposure_ms?: number;
 }
 
 // Publish a minimal stub immediately for fast-path
@@ -119,6 +124,8 @@ export const publishStub = async (item: {
   url: string;
   published_at?: string;
   description?: string;
+  transport?: string;
+  first_seen_at?: string;
 }): Promise<{ id: string; success: boolean; error?: string }> => {
   const startTime = Date.now();
   
@@ -173,8 +180,12 @@ export const publishStub = async (item: {
       return { id, success: false, error: 'duplicate' };
     }
     
-    // Write stub immediately
+    // Write stub immediately (stub-first delivery)
     await docRef.set(stub);
+    // Emit SSE new-item event (guarded inside hub by SSE_ENABLED)
+    try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); } catch {}
+    // Track fetch/new attempt
+    incrementStats(item.source, 'fetched');
     
     const publishTime = Date.now() - startTime;
     
@@ -186,14 +197,21 @@ export const publishStub = async (item: {
     
     incrementStats(item.source, 'new');
     
-    // Log latency metrics
-    await logLatencyMetrics({
-      source_published_at: item.published_at || arrivalAt,
-      ingested_at: arrivalAt,
-      arrival_at: arrivalAt,
-      t_ingest_ms: publishTime,
-      t_publish_ms: publishTime
-    }, item.source);
+    // Log latency metrics including exposure (first_seen_at → visible_at [arrivalAt])
+    if (item.published_at) {
+      const firstSeen = item.first_seen_at ? Date.parse(item.first_seen_at) : undefined;
+      const visibleAt = Date.parse(arrivalAt);
+      const exposureMs = (firstSeen && Number.isFinite(firstSeen)) ? Math.max(0, visibleAt - firstSeen) : undefined as any;
+      await logLatencyMetrics({
+        source_published_at: item.published_at,
+        ingested_at: arrivalAt,
+        arrival_at: arrivalAt,
+        first_seen_at: item.first_seen_at,
+        t_ingest_ms: 0,
+        t_publish_ms: 0,
+        ...(exposureMs != null ? { t_exposure_ms: exposureMs } as any : {})
+      }, item.source, item.transport || 'adaptive');
+    }
     
     return { id, success: true };
     
@@ -376,16 +394,31 @@ const generateThreadId = (primaryEntity: string | undefined, pubDate: string): s
 };
 
 // Log latency metrics for monitoring
-const logLatencyMetrics = async (metrics: LatencyMetrics, source: string): Promise<void> => {
+const logLatencyMetrics = async (metrics: LatencyMetrics, source: string, transportOverride?: string): Promise<void> => {
   try {
     const db = getDb();
     const metricsCollection = db.collection('latency_metrics');
-    
-    const metricDoc = {
+    // Recompute publish→ingest delta robustly from provided timestamps
+    const pubMsRaw = Date.parse(metrics.source_published_at);
+    const ingMsRaw = Date.parse(metrics.ingested_at);
+    const tPublishMs = (Number.isFinite(pubMsRaw) && Number.isFinite(ingMsRaw))
+      ? Math.max(0, ingMsRaw - pubMsRaw)
+      : null;
+
+    const metricDoc: any = {
       ...metrics,
       source,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      transport: transportOverride || 'stub'
     };
+    // Override with computed values and avoid emitting bogus placeholders
+    if (tPublishMs != null) {
+      metricDoc.t_publish_ms = tPublishMs;
+      metricDoc.t_ingest_ms = tPublishMs;
+    } else {
+      // If we cannot compute, skip writing to avoid zero-inflating metrics
+      return;
+    }
     
     await metricsCollection.add(metricDoc);
   } catch (error) {
