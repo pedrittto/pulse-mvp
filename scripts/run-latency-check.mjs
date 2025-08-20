@@ -10,7 +10,7 @@ import path from 'path';
 const BASE_URL = process.env.BASE_URL || 'http://127.0.0.1:4000';
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || process.env.ADMIN_TOKENS?.split(',')[0] || 'localtest';
 
-const RUN_MINUTES = parseInt(process.env.RUN_MINUTES || '7', 10); // total runtime
+const RUN_MINUTES = parseInt(process.env.RUN_MINUTES || '10', 10); // total runtime
 const RECONNECT_AFTER_MS = 3 * 60 * 1000; // ~T+3 min
 const START_INJECTION_AFTER_MS = 30 * 1000; // start injections at T+30s
 const INJECTION_SPACING_MS = 60 * 1000; // 3 injections spaced 60s
@@ -28,7 +28,17 @@ const sseCsv = path.join(artifactsDir, `sse_events_${START_TS}.csv`);
 const enrichCsv = path.join(artifactsDir, `stub_enrichment_${START_TS}.csv`);
 
 fs.writeFileSync(sseCsv, 'ts,id,ingested_at,received_at_ms,sse_delivery_ms\n');
-fs.writeFileSync(enrichCsv, 'ts,id,ingested_at,checked_at_ms,enriched,enrichment_delay_ms,headline,url\n');
+fs.writeFileSync(enrichCsv, 'id,enriched,enrichment_delay_ms,headline,url,notes\n');
+const TIER1 = [
+  'PRNewswire',
+  'GlobeNewswire',
+  'Business Wire',
+  'SEC Filings',
+  'NASDAQ Trader News',
+  'NASDAQ Trader Halts',
+  'NYSE Notices'
+];
+
 
 function sleep(ms) { return new Promise(res => setTimeout(res, ms)); }
 
@@ -169,7 +179,7 @@ async function injectTestItem(uid) {
   const title = `TEST_PULSE_LATENCY_${uid}`;
   const url = `http://localhost/test/${uid}`;
   const source = 'Synthetic Test';
-  const body = { title, source, url, tags: ['test','latency'] };
+  const body = { title, source, url, tags: ['test','latency'], transport: 'test', breaking: true };
   const res = await httpJson('/admin/quick-post', {
     method: 'POST',
     headers: {
@@ -181,19 +191,25 @@ async function injectTestItem(uid) {
   return { ok: res.ok, status: res.status, id: res.json?.id, body: res.json };
 }
 
-async function checkEnrichment(itemId, ingestedAtIso) {
-  // 1–3s after event; caller decides delay
-  const res = await httpJson(`/feed/since?after=${encodeURIComponent(ingestedAtIso)}&limit=50`);
-  if (!res.ok || !res.json) return { found: false };
-  const arr = Array.isArray(res.json.items) ? res.json.items : [];
-  const found = arr.find(it => it.id === itemId);
-  if (!found) return { found: false };
-  const enriched = !!(found.impact || found.verification || (found.headline && found.headline.length > 0));
-  return {
-    found: true,
-    enriched,
-    item: found
-  };
+async function multiProbeEnrichment(itemId, ingestedAtIso) {
+  const probes = [500, 1500, 3000, 6000, 10000];
+  const start = Date.now();
+  for (const delay of probes) {
+    const wait = Math.max(0, start + delay - Date.now());
+    if (wait > 0) await sleep(wait);
+    const res = await httpJson(`/feed/since?after=${encodeURIComponent(ingestedAtIso)}&limit=50`);
+    if (!res.ok || !res.json) continue;
+    const arr = Array.isArray(res.json.items) ? res.json.items : [];
+    const found = arr.find(it => it.id === itemId);
+    if (found) {
+      const enriched = !!(found.impact || found.verification || (found.headline && found.headline.length > 0));
+      if (enriched) {
+        const delayMs = Date.now() - Date.parse(ingestedAtIso);
+        return { enriched: true, delayMs, item: found };
+      }
+    }
+  }
+  return { enriched: false, delayMs: null, item: null };
 }
 
 async function main() {
@@ -204,6 +220,7 @@ async function main() {
   let sseEventsCount = 0;
   let lastHeartbeatAt = null;
   let heartbeatGapFlagged = false;
+  let heartbeatGapCount = 0;
   let midrunHealthSseClients = 0;
   let reconnectUsedLastId = null;
   let reconnectedAtMs = null;
@@ -226,7 +243,7 @@ async function main() {
     initialLastId: '0',
     onHeartbeat: (t) => {
       if (lastHeartbeatAt && (t - lastHeartbeatAt) > HEARTBEAT_MAX_GAP_MS) {
-        heartbeatGapFlagged = true;
+        heartbeatGapFlagged = true; heartbeatGapCount++;
       }
       lastHeartbeatAt = t;
     },
@@ -240,20 +257,12 @@ async function main() {
         sseLatencies.push(delta);
         fs.appendFileSync(sseCsv, `${nowIso()},${evt.id},${ingIso},${receivedAtMs},${delta}\n`);
 
-        // enrichment probe ~1.5s after
-        await sleep(1500);
-        const enr = await checkEnrichment(evt.id, ingIso);
-        let enrichmentDelay = null;
-        let headline = '';
-        let url = '';
-        if (enr.found) {
-          headline = enr.item?.headline || '';
-          url = enr.item?.url || '';
-          if (enr.enriched) {
-            enrichmentDelay = Math.max(0, Date.now() - Date.parse(ingIso));
-          }
-        }
-        fs.appendFileSync(enrichCsv, `${nowIso()},${evt.id},${ingIso},${Date.now()},${enr.found && enr.enriched},${enrichmentDelay ?? ''},"${(headline || '').replace(/"/g,'\"')}",${url}\n`);
+        // enrichment multi-probe
+        const enr = await multiProbeEnrichment(evt.id, ingIso);
+        const headline = enr.item?.headline || '';
+        const url = enr.item?.url || '';
+        const delayMs = enr.enriched ? enr.delayMs : '';
+        fs.appendFileSync(enrichCsv, `${evt.id},${enr.enriched},${delayMs},"${headline.replace(/"/g,'\"')}",${url},${enr.enriched ? '' : 'N/A by 10s'}\n`);
       } catch {
         // ignore
       }
@@ -268,9 +277,8 @@ async function main() {
   })();
 
   // Run until end
-  while (Date.now() < endAt) {
-    await sleep(1000);
-  }
+  // Stop condition: ≥15 new events or 10 minutes
+  while (Date.now() < endAt && sseEventsCount < 15) { await sleep(1000); }
 
   stopSignal.stopped = true;
   await Promise.allSettled([snapshotPromise, ssePromise, ...injectPromises]);
@@ -305,10 +313,7 @@ async function main() {
   // Publisher→Ingest per-source (Breaking allowlist only)
   const bySource = lastMetrics?.by_source || {};
   const metricsSources = Object.keys(bySource);
-  const breakingSources = Array.isArray(lastHealth?.breaking?.sources)
-    ? lastHealth.breaking.sources.map(s => s.name)
-    : [];
-  const allowlist = metricsSources.filter(s => breakingSources.includes(s));
+  const allowlist = metricsSources.filter(s => TIER1.includes(s));
   const passingSources = allowlist.filter(s => {
     const p50 = bySource[s]?.publisher_p50;
     return typeof p50 === 'number' && p50 <= 300000; // 5 minutes
@@ -349,7 +354,7 @@ async function main() {
   report.push('');
   report.push('Mid-run health');
   report.push(`- /health @ ~T+5m sse.clients: ${midrunHealthSseClients}`);
-  report.push(`- heartbeat gap > 45s observed: ${heartbeatGapFlagged}`);
+  report.push(`- heartbeat gap > 45s observed: ${heartbeatGapFlagged} (count=${heartbeatGapCount})`);
   report.push(`- reconnect used Last-Event-ID: ${reconnectUsedLastId ?? ''}`);
   report.push(`- post-reconnect events observed: ${postReconnectEventObserved}`);
   report.push('');
