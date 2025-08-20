@@ -130,11 +130,11 @@ app.get('/health', (_req, res) => {
         state_persisted: false
       },
       breaking: {
-        enabled: false,
-        running: false,
-        sources: 0,
-        min_next_poll_ms: null,
-        max_next_poll_ms: null,
+        enabled: getConfig().breakingMode,
+        running: getConfig().breakingMode ? breakingScheduler.getStatus().isRunning : false,
+        sources: getConfig().breakingMode ? breakingScheduler.getStatus().sources.length : 0,
+        min_next_poll_ms: getConfig().breakingMode ? minMax.min : null,
+        max_next_poll_ms: getConfig().breakingMode ? minMax.max : null,
         state_persisted: false
       }
     },

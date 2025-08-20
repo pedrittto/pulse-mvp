@@ -1055,24 +1055,28 @@ router.get('/metrics-summary', async (_req, res) => {
       .orderBy('timestamp', 'desc')
       .limit(500)
       .get();
-    const per: Record<string, { pub: number[]; pulse: number[] }> = {};
+    const per: Record<string, { pub: number[]; pulse: number[]; transports?: string[]; last_age_min?: number | null; dropped_by_date?: number } > = {};
     if (snap && Array.isArray((snap as any).docs)) {
       (snap as any).docs.forEach((d: any) => {
         const data = d.data();
         const s = data.source as string;
         if (!s) return;
-        per[s] = per[s] || { pub: [], pulse: [] };
-        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        const isSynthetic = data.transport === 'test' || (Array.isArray(data.tags) && data.tags.includes('test'));
+        per[s] = per[s] || { pub: [], pulse: [], transports: [], last_age_min: null, dropped_by_date: 0 };
+        if (!isSynthetic && typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
         if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+        if (data.transport) per[s].transports!.push(data.transport);
       });
     } else if (snap && typeof (snap as any).forEach === 'function') {
       (snap as any).forEach((d: any) => {
         const data = d.data();
         const s = data.source as string;
         if (!s) return;
-        per[s] = per[s] || { pub: [], pulse: [] };
-        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        const isSynthetic = data.transport === 'test' || (Array.isArray(data.tags) && data.tags.includes('test'));
+        per[s] = per[s] || { pub: [], pulse: [], transports: [], last_age_min: null, dropped_by_date: 0 };
+        if (!isSynthetic && typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
         if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+        if (data.transport) per[s].transports!.push(data.transport);
       });
     }
     const p50 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.5)] : null;

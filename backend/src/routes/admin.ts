@@ -9,7 +9,7 @@ const router = express.Router();
 // Quick post endpoint for manual breaking news insertion
 router.post('/quick-post', requireAdmin, async (req, res) => {
   try {
-    const { title, source, url, tags } = req.body;
+    const { title, source, url, tags, transport, breaking } = req.body;
     
     // Validate required fields
     if (!title || !source || !url) {
@@ -36,7 +36,9 @@ router.post('/quick-post', requireAdmin, async (req, res) => {
       title,
       source,
       url,
-      description: tags ? `Tags: ${tags.join(', ')}` : undefined
+      description: tags ? `Tags: ${tags.join(', ')}` : undefined,
+      transport: transport || 'adaptive',
+      ...(breaking ? { first_seen_at: new Date().toISOString() } : {})
     });
     
     if (!result.success) {
