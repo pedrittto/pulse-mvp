@@ -14,6 +14,7 @@ import { getDb } from '../lib/firestore';
 import { cryptoFeeds } from '../config/cryptoFeeds';
 import { expansionFeeds } from '../config/expansionFeeds';
 import { getConfig } from '../config/env';
+import { probes } from '../ops/probes';
 
 const parseXML = promisify(parseString);
 async function parseXmlLocally(xml: string) {
@@ -467,6 +468,7 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
 
     if (response.status === 304) {
       bumpCounter(feed.name, 304);
+      try { probes.recordHttpStatus(new URL(feed.url).host, 304); } catch {}
       await updatePerSourceIngestStatus({
         source: feed.name,
         fetched_at: new Date().toISOString(),
@@ -477,6 +479,7 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
     }
 
     if (!response.ok) {
+      try { probes.recordHttpStatus(new URL(feed.url).host, Number(response.status) || 0); } catch {}
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 

@@ -9,6 +9,7 @@ import { sanitizeText } from '../utils/sanitize';
 import { computeVerification } from '../utils/verification';
 import { isTradingRelevant } from '../utils/tradingFilter';
 import { getConfig } from '../config/env';
+import { probes } from '../ops/probes';
 
 // Environment getter functions
 const getBreakingLogLevel = () => process.env.BREAKING_LOG_LEVEL || 'info';
@@ -202,7 +203,7 @@ export const publishStub = async (item: {
     if (bw) { try { (bw as any).set(docRef, stub, { merge: false }); incEnqueued(); } catch { await docRef.set(stub); } }
     else { await docRef.set(stub); }
     // Emit SSE new-item event (guarded inside hub by SSE_ENABLED)
-    try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); } catch {}
+    try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); try { probes.recordEmitted(id, item.source || null, arrivalAt); } catch {} } catch {}
     // Track fetch/new attempt
     incrementStats(item.source, 'fetched');
     

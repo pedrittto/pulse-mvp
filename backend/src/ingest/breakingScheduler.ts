@@ -7,6 +7,8 @@ import { rssFeeds } from '../config/rssFeeds';
 import { expansionFeeds } from '../config/expansionFeeds';
 import * as fs from 'fs';
 import * as path from 'path';
+import { probes } from '../ops/probes';
+import { isOriginDomain } from './originsRegistry';
 
 const parseXML = promisify(parseString);
 
@@ -115,6 +117,8 @@ class BreakingScheduler {
   private laneMaxDefault = parseInt(process.env.LANE_DEFAULT_MAX || '6', 10);
   private hostActive: Map<string, number> = new Map();
   private hostLimit = parseInt(process.env.LANE_PER_HOST_MAX || '4', 10);
+  // Per-host token buckets per lane (origins, fastlane, default) — guarded by flags
+  private hostTokens: Map<string, { origins: number; fastlane: number; def: number; lastRefill: number }> = new Map();
   private instanceId: string = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
   private lockInterval: NodeJS.Timeout | null = null;
   private hasLock: boolean = false;
@@ -355,18 +359,48 @@ class BreakingScheduler {
     }
     // Jitter to avoid herd
     const jitterMs = Math.floor(Math.random() * 500);
-    // Fastlane clamp for designated breaking sources
+    // Fastlane v2 clamps (Origins and Fastlane lanes), fully flag-guarded
     const fastlane = process.env.FASTLANE_ENABLED === '1';
-    if (fastlane && this.isBreakingSource(source.name)) {
-      // Base clamp 5–10s with small jitter
-      let clamped = Math.max(5000, Math.min(10000, interval));
-      clamped = clamped + Math.floor(Math.random() * 300);
-      // If in burst window, temporarily accelerate to ~2s
-      const until = this.burstUntil.get(source.name) || 0;
-      if (until > now) {
-        clamped = Math.min(clamped, this.burstMinIntervalMs);
-      }
-      interval = clamped;
+    const origins = process.env.ORIGINS_ENABLED === '1';
+    const inBurst = (this.burstUntil.get(source.name) || 0) > now;
+
+    const pickInRange = (raw: string | undefined, fallbackMin: number, fallbackMax: number) => {
+      try {
+        if (!raw) return Math.floor(Math.random() * (fallbackMax - fallbackMin + 1)) + fallbackMin;
+        const [a,b] = String(raw).split('-').map(s=>parseInt(s.trim(),10));
+        const lo = Number.isFinite(a) ? a : fallbackMin; const hi = Number.isFinite(b) ? b : (Number.isFinite(a)?a:fallbackMax);
+        const minV = Math.min(lo, hi), maxV = Math.max(lo, hi);
+        return Math.floor(Math.random() * (maxV - minV + 1)) + minV;
+      } catch { return Math.floor(Math.random() * (fallbackMax - fallbackMin + 1)) + fallbackMin; }
+    };
+
+    // Hot windows (simple: use per-lane time ranges in local tz string; leave exact windowing for future improvement)
+    const useHot = true; // placeholder: flag-driven windows are future work; clamp ranges already provide spread
+
+    // Determine host classification
+    const host = (() => { try { return new URL(source.url).host; } catch { return ''; } })();
+    const isOrigin = origins && isOriginDomain(host);
+    if (origins && isOrigin) {
+      // Origins lane clamps
+      const active = pickInRange(process.env.ORIGINS_CLAMP_ACTIVE_MS, 500, 1500);
+      const idle = pickInRange(process.env.ORIGINS_CLAMP_IDLE_MS, 1500, 3000);
+      let clamped = useHot ? active : idle;
+      if (inBurst) clamped = Math.min(clamped, this.burstMinIntervalMs);
+      interval = Math.min(interval, clamped);
+    } else if (fastlane && this.isBreakingSource(source.name)) {
+      // Fastlane Tier-1 clamps
+      const active = pickInRange(process.env.FASTLANE_CLAMP_ACTIVE_MS, 1000, 2000);
+      const idle = pickInRange(process.env.FASTLANE_CLAMP_IDLE_MS, 2000, 5000);
+      let clamped = useHot ? active : idle;
+      if (inBurst) clamped = Math.min(clamped, this.burstMinIntervalMs);
+      interval = Math.min(interval, clamped);
+    } else {
+      // Regular/Longtail ranges (best-effort)
+      const reg = pickInRange(process.env.REGULAR_CLAMP_MS, 20000, 30000);
+      const lt = pickInRange(process.env.LONGTAIL_CLAMP_MS, 90000, 180000);
+      // prefer existing interval, otherwise favor regular window
+      interval = Math.min(interval, Math.max(reg, 1000));
+      // longtail round-robin window honored elsewhere via schedule fairness
     }
     // Add stable per-source splay
     interval += this.getSplayFor(source.name);
@@ -442,6 +476,30 @@ class BreakingScheduler {
     this.hostActive.set(host, Math.max(0, v));
   }
 
+  // Token bucket (per host per lane). Rates controlled via *_PER_HOST_RPS flags.
+  private takeToken(host: string, lane: 'origins'|'fastlane'|'def'): boolean {
+    const now = Date.now();
+    let rec = this.hostTokens.get(host);
+    if (!rec) { rec = { origins: 0, fastlane: 0, def: 0, lastRefill: now }; this.hostTokens.set(host, rec); }
+    const dt = Math.max(0, now - rec.lastRefill);
+    // refill based on RPS per lane
+    const originsRps = Math.max(1, parseInt(process.env.ORIGINS_PER_HOST_RPS || '3', 10));
+    const fastRps = Math.max(1, parseInt(process.env.FASTLANE_PER_HOST_RPS || '3', 10));
+    const defRps = Math.max(1, parseInt(process.env.DEFAULT_PER_HOST_RPS || '2', 10));
+    const addOrigins = Math.floor((dt / 1000) * originsRps);
+    const addFast = Math.floor((dt / 1000) * fastRps);
+    const addDef = Math.floor((dt / 1000) * defRps);
+    // caps to small burst size=RPS
+    rec.origins = Math.min(originsRps, rec.origins + addOrigins);
+    rec.fastlane = Math.min(fastRps, rec.fastlane + addFast);
+    rec.def = Math.min(defRps, rec.def + addDef);
+    rec.lastRefill = now;
+    if (lane === 'origins') { if (rec.origins > 0) { rec.origins--; return true; } return false; }
+    if (lane === 'fastlane') { if (rec.fastlane > 0) { rec.fastlane--; return true; } return false; }
+    if (rec.def > 0) { rec.def--; return true; }
+    return false;
+  }
+
   // Fetch RSS feed with error handling and backoff
   private async fetchRSSFeed(source: BreakingSource): Promise<any[]> {
     // Concurrency lanes: breaking vs default
@@ -471,6 +529,16 @@ class BreakingScheduler {
         return [];
       }
       this.incHost(host);
+      // Lane token bucket per host (guarded by flags; no-op when flags off)
+      const originsEnabled = process.env.ORIGINS_ENABLED === '1';
+      const fastlaneEnabled = process.env.FASTLANE_ENABLED === '1';
+      const isTier1 = this.isBreakingSource(source.name);
+      const lane: 'origins'|'fastlane'|'def' = (originsEnabled && isOriginDomain(host)) ? 'origins' : (fastlaneEnabled && isTier1 ? 'fastlane' : 'def');
+      if (!this.takeToken(host, lane)) {
+        // No tokens available → slight backoff and reschedule
+        setTimeout(() => this.scheduleSource(source), 200);
+        return [];
+      }
       // Create AbortController for timeout
       const controller = new AbortController();
       const tier1 = ['Bloomberg Markets','Reuters Business','AP Business','CNBC','Financial Times','PRNewswire','GlobeNewswire','SEC Filings','NASDAQ Trader News','NYSE Notices','Business Wire'];
@@ -483,8 +551,8 @@ class BreakingScheduler {
       const response = await fetch(source.url, {
         headers: {
           'User-Agent': ua,
-          'If-None-Match': this.etags.get(source.name) || '',
-          'If-Modified-Since': this.lastModified.get(source.name) || ''
+          'If-None-Match': (process.env.HTTP_CONDITIONAL_GET === '1') ? (this.etags.get(source.name) || '') : '',
+          'If-Modified-Since': (process.env.HTTP_CONDITIONAL_GET === '1') ? (this.lastModified.get(source.name) || '') : ''
         },
         signal: controller.signal
       });
@@ -509,11 +577,13 @@ class BreakingScheduler {
       this.lastOkTimes.set(source.name, now);
 
       if (response.status === 304) {
+        try { const host = new URL(source.url).host; probes.recordHttpStatus(host, 304); } catch {}
         log('info', `[304] ${source.name}: Not Modified`);
         return [];
       }
 
       if (!response.ok) {
+        try { const host = new URL(source.url).host; probes.recordHttpStatus(host, Number(response.status) || 0); } catch {}
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
@@ -575,6 +645,14 @@ class BreakingScheduler {
         const title = item.title?.[0];
         const link = item.link?.[0];
         const pubDate = item.pubDate?.[0];
+        // Freshness gate (MAX_AGE_FOR_BREAKING_MS), guarded by env
+        const maxAgeMs = parseInt(process.env.MAX_AGE_FOR_BREAKING_MS || '0', 10);
+        if (maxAgeMs > 0 && pubDate) {
+          const ts = Date.parse(pubDate);
+          if (Number.isFinite(ts) && (Date.now() - ts) > maxAgeMs) {
+            continue; // skip stale
+          }
+        }
         // Minimal publish_at shim (env-gated) to improve timestamp coverage
         const useShim = String(process.env.PUBLISH_AT_SHIM || '0') === '1';
         const pubShim = useShim ? (

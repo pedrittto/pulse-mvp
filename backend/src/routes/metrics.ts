@@ -9,6 +9,7 @@ import { getDriftSnapshot } from '../ops/driftMonitor';
 import { getSocialCounters } from '../social/scheduler';
 import { getWebhookCounters } from '../ingest/webhookQueue';
 import { getBulkWriterCounters } from '../lib/bulkWriter';
+import { probes } from '../ops/probes';
 
 const router = express.Router();
 
@@ -286,6 +287,28 @@ router.get('/metrics-lite', async (_req, res) => {
       // Continue without confidence metrics
     }
     
+    // Coverage probe (rolling 10-min): unique sources touched / total configured sources (guarded)
+    if (String(process.env.COVERAGE_PROBE || '0') === '1') {
+      try {
+        const sinceIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const snap = await db.collection('system').doc('ingest_status').get();
+        let total = 0; let touched = 0;
+        if (snap.exists) {
+          const data = snap.data() as any;
+          const per_source = data?.per_source || {};
+          const names = Object.keys(per_source);
+          total = names.length;
+          const set = new Set<string>();
+          for (const [name, rec] of Object.entries<any>(per_source)) {
+            const t = rec?.last_run || rec?.fetched_at;
+            if (t && String(t) >= sinceIso) set.add(name);
+          }
+          touched = set.size;
+        }
+        (response as any).coverage = { window_min: 10, touched, total, pct: (total ? Math.round((touched/total)*100) : null) };
+      } catch {}
+    }
+
     // Build response. If any sources have samples_insufficient=true, they remain in per-source but are excluded from any future global aggregates (not implemented here to keep it light).
     const response: any = {
       ok: true,
@@ -313,6 +336,13 @@ router.get('/metrics-lite', async (_req, res) => {
       sse_broadcast_ms: process.env.SSE_ENABLED === '1' ? sseHub.getStats().broadcast_ms : 0,
       sse_dropped: process.env.SSE_ENABLED === '1' ? sseHub.getStats().dropped : 0
     };
+
+    // Optional: HTTP 429/5xx EWMA counters (guarded)
+    if (String(process.env.HTTP_RATE_PROBE || '0') === '1') {
+      try {
+        (response as any).http_error_rates = probes.getHttpRates();
+      } catch {}
+    }
 
     // Attach http conditional counters (best-effort)
     try {
