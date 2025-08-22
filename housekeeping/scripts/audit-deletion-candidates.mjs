@@ -49,10 +49,9 @@ for (const f of files) {
   }
 }
 
-// Write CSV (append header if file missing)
+// Write CSV fresh
 const header = 'path,area,reason,evidence,risk,owner,undo_path,status\n';
-let csv = '';
-if (!fs.existsSync(DC)) csv += header; else csv = fs.readFileSync(DC,'utf8');
 const newLines = rows.map(r => [r.path,r.area,r.reason,r.evidence,r.risk,r.owner,r.undo_path,r.status].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(','));
-fs.writeFileSync(DC, (csv.endsWith('\n')?csv:csv+'\n') + newLines.join('\n') + '\n');
-console.log('Appended candidates to', DC, 'count=', rows.length);
+fs.mkdirSync('housekeeping', { recursive: true });
+fs.writeFileSync(DC, header + newLines.join('\n') + (newLines.length?'\n':''));
+console.log('Wrote', DC, 'count=', rows.length);

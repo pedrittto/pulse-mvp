@@ -54,9 +54,9 @@ for (const r of rows) {
   const p = r.p.replace(/\\/g,'/');
   if (shouldExclude(p)) continue;
   let base;
-  if (p.startsWith('backend/')) base = `/_quarantine/${DATE}/backend/`;
-  else if (p.startsWith('frontend/')) base = `/_quarantine/${DATE}/frontend/`;
-  else base = `/_quarantine/${DATE}/misc/`;
+  if (p.startsWith('backend/')) base = `_quarantine/${DATE}/backend/`;
+  else if (p.startsWith('frontend/')) base = `_quarantine/${DATE}/frontend/`;
+  else base = `_quarantine/${DATE}/misc/`;
   const dest = base + p.replace(/^(backend\/|frontend\/)/,'');
   plan.push({ src: p, dest, reason: r.reason, evidence: r.evidence, risk: r.risk });
 }
