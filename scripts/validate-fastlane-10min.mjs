@@ -244,3 +244,4 @@ function tryGit() {
 		artifacts: { metricsNdjson, healthStartPath, healthEndPath, sseCsv, reportPath }
 	}, null, 2));
 })();
+

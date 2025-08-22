@@ -1,6 +1,14 @@
 import express from 'express';
 import { getDb } from '../lib/firestore';
 import { sseHub } from '../realtime/sse';
+import { getHttpConditionalCounters } from '../ingest/rss';
+import { breakingScheduler } from '../ingest/breakingScheduler';
+import { getRenderAgg } from '../realtime/renderAgg';
+import { getOpsSnapshot } from '../ops/runtimeMonitor';
+import { getDriftSnapshot } from '../ops/driftMonitor';
+import { getSocialCounters } from '../social/scheduler';
+import { getWebhookCounters } from '../ingest/webhookQueue';
+import { getBulkWriterCounters } from '../lib/bulkWriter';
 
 const router = express.Router();
 
@@ -279,7 +287,7 @@ router.get('/metrics-lite', async (_req, res) => {
     }
     
     // Build response. If any sources have samples_insufficient=true, they remain in per-source but are excluded from any future global aggregates (not implemented here to keep it light).
-    const response = {
+    const response: any = {
       ok: true,
       last_rss_poll,
       last_breaking_run,
@@ -305,7 +313,137 @@ router.get('/metrics-lite', async (_req, res) => {
       sse_broadcast_ms: process.env.SSE_ENABLED === '1' ? sseHub.getStats().broadcast_ms : 0,
       sse_dropped: process.env.SSE_ENABLED === '1' ? sseHub.getStats().dropped : 0
     };
+
+    // Attach http conditional counters (best-effort)
+    try {
+      (response as any).http_counters = getHttpConditionalCounters();
+    } catch {}
+
+    // Attach webhook counters (additive)
+    try {
+      const wc = getWebhookCounters();
+      (response as any).webhook = {
+        enabled: String(process.env.WEBHOOK_INGEST_ENABLED || '0') === '1',
+        queue_concurrency: parseInt(process.env.WEBHOOK_QUEUE_CONCURRENCY || '8', 10),
+        providers: wc
+      };
+    } catch {}
+
+    // Optional burst stats
+    try {
+      const m: Map<string, number> | undefined = (breakingScheduler as any)['burstUntil'];
+      const now = Date.now();
+      const active = m ? Array.from(m.values()).filter(v => typeof v === 'number' && v > now).length : 0;
+      (response as any).burst_stats = {
+        active_sources: active,
+        window_ms: parseInt(process.env.BURST_WINDOW_MS || '60000', 10),
+        min_interval_ms: parseInt(process.env.BURST_MIN_INTERVAL_MS || '2000', 10)
+      };
+    } catch {}
+
+    // Attach breaking eligibility and demoted list
+    try {
+      if (latency) {
+        const threshold = parseInt(process.env.BREAKING_DEMOTE_P50_MS || '60000', 10);
+        const breaking_eligible: Record<string, boolean> = {};
+        for (const [name, stats] of Object.entries<any>(latency)) {
+          const p50 = (stats && (stats.publisher_p50 ?? stats.p50));
+          breaking_eligible[name] = (typeof p50 === 'number') ? (p50 <= threshold) : false;
+        }
+        (response as any).breaking_eligible = breaking_eligible;
+      }
+      if (breakingScheduler && typeof breakingScheduler.getDemotedSources === 'function') {
+        (response as any).demoted = breakingScheduler.getDemotedSources();
+      }
+    } catch {}
+
+    // Hysteresis demote stats (additive)
+    try {
+      const m: Map<string, any> | undefined = (breakingScheduler as any)['demoted'];
+      if (m) {
+        const now = Date.now();
+        const active = Array.from(m.entries()).filter(([, info]) => info && typeof info.until === 'number' && info.until > now);
+        (response as any).demote_stats = {
+          active_demotions: active.length,
+          promote_threshold_ms: parseInt(process.env.PROMOTE_THRESHOLD_MS || '45000', 10),
+          promote_min_samples: parseInt(process.env.PROMOTE_MIN_SAMPLES || '10', 10),
+          cooldown_min_ms: parseInt(process.env.DEMOTE_MIN_COOLDOWN_MS || '1800000', 10),
+          penalty_factor: parseFloat(process.env.DEMOTE_PENALTY_FACTOR || '1.5'),
+          per_source: Object.fromEntries(active.map(([k, info]) => [k, { until_iso: new Date(info.until).toISOString(), consecutive: info.consecutive }]))
+        };
+      }
+    } catch {}
     
+    try {
+      const r = getRenderAgg();
+      (response as any).render = r;
+    } catch {}
+
+    // Attach ops snapshot (additive)
+    try {
+      const s = getOpsSnapshot();
+      (response as any).ops = {
+        window_sec: s.window_sec,
+        el_lag_p50_ms: s.el_lag_p50_ms,
+        el_lag_p95_ms: s.el_lag_p95_ms,
+        gc_pause_p50_ms: s.gc_pause_p50_ms,
+        gc_pause_p95_ms: s.gc_pause_p95_ms,
+        cpu_p50_pct: s.cpu_p50_pct,
+        cpu_p95_pct: s.cpu_p95_pct,
+        rss_mb: s.rss_mb,
+        heap_used_mb: s.heap_used_mb,
+        heap_total_mb: s.heap_total_mb,
+        samples: s.samples
+      };
+    } catch {}
+
+    // Attach bulkwriter counters (additive)
+    try {
+      const { enqueued, errors } = getBulkWriterCounters();
+      (response as any).bulkwriter = {
+        enabled: String(process.env.BULKWRITER_ENABLED || '0') === '1',
+        enqueued,
+        errors
+      };
+    } catch {}
+
+    // Attach clock drift snapshot (additive)
+    try {
+      const d = getDriftSnapshot();
+      (response as any).drift = {
+        window_sec: d.window_sec,
+        global_p50_ms: d.global_p50_ms,
+        global_p95_ms: d.global_p95_ms,
+        by_host: Object.fromEntries(Object.entries(d.by_host).map(([k, v]) => [k, { p50_ms: v.p50_ms, p95_ms: v.p95_ms, samples: v.samples }]))
+      };
+    } catch {}
+
+    // Attach social counters (additive)
+    try {
+      const sc = getSocialCounters();
+      (response as any).social = {
+        enabled: String(process.env.SOCIAL_ENABLED || '0') === '1',
+        provider: process.env.SOCIAL_PROVIDER || 'X',
+        poll_ms: parseInt(process.env.SOCIAL_POLL_MS || '5000', 10),
+        rpm_limit: parseInt(process.env.SOCIAL_RATE_LIMIT_RPM || '300', 10),
+        ...sc
+      };
+    } catch {}
+
+    // Attach controller status (additive)
+    try {
+      const ctl = (require('..') as any).app?._ctl || (global as any)._ctl;
+      if (ctl && typeof ctl.getState === 'function') {
+        const st = ctl.getState();
+        (response as any).controller = {
+          enabled: String(process.env.CTRL_ENABLED || '0') === '1',
+          target_p50_ms: parseInt(process.env.CTRL_TARGET_P50_MS || '60000', 10),
+          global_rps_est: st.global_rps_est,
+          per_host_rps_est: st.per_host_rps_est,
+          overrides: st.overrides
+        };
+      }
+    } catch {}
     res.json(response);
   } catch (error) {
     console.error('[metrics] Error:', error);

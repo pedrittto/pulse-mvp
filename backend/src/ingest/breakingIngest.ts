@@ -1,5 +1,6 @@
 import { NewsItem, Impact } from '../types';
 import { getDb } from '../lib/firestore';
+import { getBulkWriter, incEnqueued } from '../lib/bulkWriter';
 import { sseHub } from '../realtime/sse';
 import { generateArticleHash } from '../storage';
 import { scoreNews } from '../utils/scoring';
@@ -130,6 +131,22 @@ export const publishStub = async (item: {
   const startTime = Date.now();
   
   try {
+    // Optional: coerce published_at when upstream lacks it (gated)
+    function coercePublishedAt(it: any): string | null {
+      const tryDates = [it?.published_at, it?.pubDate, it?.isoDate];
+      for (const d of tryDates) {
+        if (d) { const t = new Date(d); if (!Number.isNaN(+t)) return t.toISOString(); }
+      }
+      if (process.env.ALLOW_PUBLISH_AT_FALLBACK === '1') {
+        try { if (it?.first_seen_at) { const t = new Date(it.first_seen_at); if (!Number.isNaN(+t)) return t.toISOString(); } } catch {}
+        return new Date().toISOString();
+      }
+      return null;
+    }
+    if (!('published_at' in item) || !item.published_at) {
+      const coerced = coercePublishedAt(item);
+      if (coerced) (item as any).published_at = coerced;
+    }
     const db = getDb();
     const newsCollection = db.collection('news');
     
@@ -181,7 +198,9 @@ export const publishStub = async (item: {
     }
     
     // Write stub immediately (stub-first delivery)
-    await docRef.set(stub);
+    const bw = getBulkWriter({ enabled: String(process.env.BULKWRITER_ENABLED || '0') === '1' });
+    if (bw) { try { (bw as any).set(docRef, stub, { merge: false }); incEnqueued(); } catch { await docRef.set(stub); } }
+    else { await docRef.set(stub); }
     // Emit SSE new-item event (guarded inside hub by SSE_ENABLED)
     try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); } catch {}
     // Track fetch/new attempt

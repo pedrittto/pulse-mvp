@@ -1,3 +1,4 @@
+import './http/transport';
 import 'dotenv/config';
 
 import express from 'express';
@@ -12,12 +13,33 @@ import { getCurrentSourceStats, cleanupBreakingIngest } from './ingest/breakingI
 import { logAdminDiagnostics } from './middleware/admin';
 import { sseHub } from './realtime/sse';
 import { startControlFeed, stopControlFeed } from './dev/controlFeed';
+import { initHttpValidators } from './ingest/rss';
+import { runWarmupIfEnabled } from './bootstrap/warmup';
+import { flushAndClose as flushBulkWriter } from './lib/bulkWriter';
+import { startWatchdog, getWatchdogState } from './watchdog/sloWatchdog';
+import { startRuntimeMonitor, getOpsSnapshot } from './ops/runtimeMonitor';
+import { startSocialLane } from './social/scheduler';
+import { startPollController } from './ingest/pollController';
+import { getReady, isReady, setReady } from './ops/ready';
+import { getDb } from './lib/firestore';
 
 const app = express();
 const port = getConfig().port;
 
 // Export app for testing (without starting the server)
 export { app };
+
+// Lightweight request logger
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on('finish', () => {
+    try {
+      const dt = Date.now() - t0;
+      console.log(`[http] ${req.method} ${req.url} -> ${res.statusCode} ${dt}ms`);
+    } catch {}
+  });
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -61,87 +83,46 @@ app.use(limiter);
 app.use(morgan('combined'));
 app.use(express.json());
 
+// Start runtime monitor early
+startRuntimeMonitor();
+// Mark Firestore readiness once first listCollections succeeds (best-effort)
+try { getDb().listCollections().then(()=> setReady('firestore', true)).catch(()=>{}); } catch {}
+
 // Routes
 app.get('/health', (_req, res) => {
-  const breakingStatus = breakingScheduler.getStatus();
-  const sourceStats = getCurrentSourceStats();
-  
-  // Get breaking mode status
-  const breakingMode = getConfig().breakingMode;
-  
-  // Build breaking snapshot
-  const breakingSnapshot = {
-    mode: breakingMode ? 'on' : 'off',
-    version: '1.0.0', // TODO: Get from package.json or git
-    sources: breakingStatus.sources.map(source => {
-      const stats = sourceStats[source.name] || { fetched: 0, new: 0, duplicate: 0, errors: 0 };
-      return {
-        name: source.name,
-        intervalMs: source.interval_ms,
-        lastFetchAt: source.lastFetchAt,
-        lastOkAt: source.lastOkAt,
-        newInLast1m: stats.new,
-        duplicatesInLast1m: stats.duplicate,
-        errorsInLast5m: stats.errors,
-        inEventWindow: source.inEventWindow,
-        backoffState: source.backoffState ? {
-          currentInterval: source.backoffState.currentInterval,
-          attempt: source.backoffState.attempt,
-          lastError: source.backoffState.lastError
-        } : null
-      };
-    })
-  };
+  try {
+    const data: any = { ok: true, ts: new Date().toISOString() };
+    try {
+      const ready = require('./ops/ready')?.getReady?.();
+      if (ready) data.ready = ready;
+    } catch {}
+    try {
+      const sseStats = require('./realtime/sse')?.sseHub?.getStats?.();
+      if (sseStats) data.sse = { clients: sseStats.clients, seq: sseStats.seq };
+    } catch {}
+    try {
+      const hb = (require('./ingest/breakingScheduler').breakingScheduler)?.getHeartbeat?.();
+      if (hb) data.scheduler = hb;
+    } catch {}
+    try {
+      const cfg = require('./config/rssFeeds');
+      const list = (cfg?.rssFeeds || []).map((s: any) => ({ name: s.name, enabled: s.enabled !== false, fastlane: s.fastlane !== false }));
+      data.sources = list;
+    } catch {}
+    res.status(200).json(data);
+  } catch {
+    res.status(200).json({ ok: true, ts: new Date().toISOString() });
+  }
+});
+app.get('/healthz', (_req, res) => res.status(200).type('text/plain').send('ok'));
 
-  const minMax = breakingScheduler.getMinMaxNextPollMs();
-  res.json({ 
-    ok: true,
-    uptime: process.uptime(),
-    version: process.env.npm_package_version || '0.0.0',
-    node: process.version,
-    timestamp: new Date().toISOString(),
-    env: {
-      NODE_ENV: getConfig().nodeEnv,
-      BREAKING_MODE: getConfig().breakingMode ? '1' : '0',
-      VERIFICATION_MODE: getConfig().verificationMode,
-      IMPACT_MODE: getConfig().impactMode,
-      // confidence numeric mode removed
-      SOURCE_REQUEST_TIMEOUT_MS: getConfig().sourceRequestTimeoutMs,
-      // Redact sensitive values
-      FIREBASE_PROJECT_ID: getConfig().firebaseProjectId ? '***' : undefined,
-      ADMIN_TOKEN: getConfig().adminToken ? '***' : undefined,
-      ADMIN_ALLOW_PURGE: getConfig().adminAllowPurge
-    },
-    config: {
-      breakingMode: getConfig().breakingMode,
-      verificationMode: getConfig().verificationMode,
-      impactMode: getConfig().impactMode,
-      breakingSourcesJson: getConfig().breakingSourcesJson ? 'configured' : 'not configured',
-      eventWindowsJson: getConfig().eventWindowsJson ? 'configured' : 'not configured'
-    },
-    breaking: breakingSnapshot,
-    schedulers: {
-      adaptive: {
-        enabled: true,
-        running: breakingScheduler.getStatus().isRunning,
-        sources: breakingScheduler.getStatus().sources.length,
-        min_next_poll_ms: minMax.min,
-        max_next_poll_ms: minMax.max,
-        state_persisted: false
-      },
-      breaking: {
-        enabled: getConfig().breakingMode,
-        running: getConfig().breakingMode ? breakingScheduler.getStatus().isRunning : false,
-        sources: getConfig().breakingMode ? breakingScheduler.getStatus().sources.length : 0,
-        min_next_poll_ms: getConfig().breakingMode ? minMax.min : null,
-        max_next_poll_ms: getConfig().breakingMode ? minMax.max : null,
-        state_persisted: false
-      }
-    },
-    sse: { clients: (process.env.SSE_ENABLED === '1') ? require('./realtime/sse').sseHub.getStats().clients : 0 },
-    breaking_demoted_sources: breakingScheduler.getDemotedSources(),
-    latency_alerts_active: breakingScheduler.isLatencyAlertActive()
-  });
+// Liveness and Readiness probes
+app.get('/livez', (_req, res) => { res.status(200).json({ ok: true }); });
+app.get('/readyz', (_req, res) => {
+  if (isReady()) return res.status(200).json({ ready: true });
+  const s = getReady();
+  const reason = Object.entries(s).filter(([k,v])=>!v && (k!=='warmupDone' || process.env.WARMUP_TIER1==='1')).map(([k])=>k).join(',') || 'initializing';
+  return res.status(503).json({ ready: false, reason, state: s });
 });
 
 // CORS test endpoint
@@ -200,6 +181,8 @@ if (require.main === module) {
     // Log admin diagnostics
     logAdminDiagnostics();
     
+    // Seed HTTP validators from persistence before starting ingestion
+    (async () => { try { await initHttpValidators(); await runWarmupIfEnabled(); } catch {} })();
     // Start RSS ingestion cron job
     startRSSIngestion();
     // Start control synthetic feed for dev/CI only
@@ -208,12 +191,20 @@ if (require.main === module) {
       console.log('[server] SOURCE_SET=crypto_v1 enabled. AUDIT_MODE=%s', process.env.AUDIT_MODE === '1' ? 'ON' : 'OFF');
     }
     
-    // Start breaking news scheduler if enabled
-    if (getConfig().breakingMode) {
-      console.log('[breaking] Starting breaking news scheduler');
+    // Start breaking news scheduler (unless explicitly disabled)
+    const DISABLE_INGEST = process.env.DISABLE_INGEST === '1';
+    console.log('[boot] flags', {
+      FASTLANE_ENABLED: process.env.FASTLANE_ENABLED,
+      RSS_TRANSPORT_V2: process.env.RSS_TRANSPORT_V2,
+      USE_FAKE_FIRESTORE: process.env.USE_FAKE_FIRESTORE,
+      WARMUP_TIER1: process.env.WARMUP_TIER1
+    });
+    if (!DISABLE_INGEST) {
+      console.log('[boot] starting breaking scheduler…');
       breakingScheduler.start();
+      console.log('[boot] breaking scheduler started. sources=', (breakingScheduler as any).getStatus?.().sources?.length ?? 'n/a');
     } else {
-      console.log('[breaking] Breaking mode disabled (set BREAKING_MODE=1 to enable)');
+      console.log('[boot] DISABLE_INGEST=1 → scheduler not started');
     }
     // Internal readiness probe to /health
     const readyTimeout = setTimeout(() => {
@@ -226,6 +217,69 @@ if (require.main === module) {
         if (res.ok) {
           console.log('[boot][ready]');
           clearTimeout(readyTimeout);
+          // Mark SSE ready then start social lane (if enabled)
+          try { setReady('sse', true); } catch {}
+          try { await startSocialLane(); } catch (e) { console.warn('[social] failed to start', (e as any)?.message || String(e)); }
+          // Start adaptive poll controller if enabled
+          if (String(process.env.CTRL_ENABLED || '0') === '1') {
+            try {
+              const ctl = startPollController(async () => {
+                // Assemble per-source p50 + http 200/304 and host mapping from rssFeeds
+                const stats: any = {};
+                try {
+                  const db = require('./lib/firestore').getDb();
+                  const windowMin = Math.max(5, parseInt(process.env.CTRL_EVAL_WINDOW_MIN || '15', 10));
+                  const sinceIso = new Date(Date.now() - windowMin*60*1000).toISOString();
+                  const snap = await db.collection('latency_metrics').where('timestamp','>=', sinceIso).get();
+                  const m: Record<string, number[]> = {};
+                  if (snap && Array.isArray((snap as any).docs)) {
+                    (snap as any).docs.forEach((d:any)=>{ const s=d.data()?.source; const t=d.data()?.t_publish_ms; if (typeof s==='string' && typeof t==='number' && t>=0) (m[s] ||= []).push(t); });
+                  } else if (snap && typeof (snap as any).forEach==='function') {
+                    (snap as any).forEach((d:any)=>{ const s=d.data()?.source; const t=d.data()?.t_publish_ms; if (typeof s==='string' && typeof t==='number' && t>=0) (m[s] ||= []).push(t); });
+                  }
+                  const counters = require('./ingest/rss').getHttpConditionalCounters?.() || {};
+                  const feeds = require('./config/rssFeeds').rssFeeds || [];
+                  const hostMap: Record<string,string> = {}; feeds.forEach((f:any)=>{ try { hostMap[f.name] = new URL(f.url).host; } catch {} });
+                  const p50 = (arr:number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.5)] : null;
+                  for (const [name, arr] of Object.entries(m)) {
+                    const c = counters[name] || { c200:0, c304:0 };
+                    stats[name] = { p50: p50(arr as number[]), samples: (arr as number[]).length, http200: c.c200||0, http304: c.c304||0, host: hostMap[name]||'unknown' };
+                  }
+                } catch {}
+                return stats;
+              }, (changes: Record<string, number>) => {
+                try { (breakingScheduler as any).applyOverrides(changes); } catch {}
+              });
+              (app as any)._ctl = ctl;
+            } catch (e) { console.warn('[controller] failed to start', (e as any)?.message || String(e)); }
+          }
+          // Start SLO watchdog if enabled
+          if (process.env.WATCHDOG_ENABLED === '1') {
+            try {
+              const getKpi = async () => {
+                const windowMin = Math.max(5, parseInt(process.env.WATCHDOG_WINDOW_MIN || '30', 10));
+                try {
+                  // Prefer in-process function via local fetch
+                  const r = await fetch(`http://127.0.0.1:${port}/kpi-breaking?window_min=${windowMin}`, { headers: { 'cache-control': 'no-store' } });
+                  const j = await r.json();
+                  return j;
+                } catch (e) {
+                  throw e;
+                }
+              };
+              const postAlert = async (payload: any) => {
+                const url = process.env.WATCHDOG_WEBHOOK_URL;
+                if (!url) return;
+                try {
+                  await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                } catch (e) { console.warn('[watchdog] webhook post failed', (e as any)?.message || String(e)); }
+              };
+              startWatchdog(getKpi, postAlert);
+              console.log('[watchdog] started');
+            } catch (e) {
+              console.warn('[watchdog] failed to start', (e as any)?.message || String(e));
+            }
+          }
         } else {
           console.error('[boot][ready][fail] status=' + res.status);
           clearTimeout(readyTimeout);
@@ -263,6 +317,13 @@ if (require.main === module) {
         breakingScheduler.stop();
       }
       
+      try { require('./realtime/sse').sseHub.stopAccepting(); } catch {}
+      try {
+        const ms = parseInt(process.env.DRAIN_SSE_CLOSE_MS || '2000', 10);
+        require('./realtime/sse').sseHub.announceAndCloseAll(ms);
+      } catch {}
+      try { const { flushAndClose } = require('./lib/bulkWriter'); flushAndClose().catch(()=>{}); } catch {}
+      
       console.log('[server] Graceful shutdown completed');
       process.exit(0);
     });
@@ -278,5 +339,7 @@ if (require.main === module) {
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
   process.on('SIGTERM', () => { try { sseHub.shutdown(); } catch {} });
+  process.on('SIGINT', async () => { try { await flushBulkWriter(); } catch {} });
+  process.on('SIGTERM', async () => { try { await flushBulkWriter(); } catch {} });
   process.on('SIGINT', () => { try { sseHub.shutdown(); } catch {} });
 }

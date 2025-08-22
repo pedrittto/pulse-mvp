@@ -1,5 +1,8 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
+import { parseStringPromise } from 'xml2js';
+import { getXmlPool } from './xmlWorkerPool';
+import { listValidators, setValidator } from '../lib/httpCache';
 import { NewsItem, Impact } from '../types';
 import { rssFeeds } from '../config/rssFeeds';
 import { addNewsItems, generateArticleHash } from '../storage';
@@ -13,6 +16,9 @@ import { expansionFeeds } from '../config/expansionFeeds';
 import { getConfig } from '../config/env';
 
 const parseXML = promisify(parseString);
+async function parseXmlLocally(xml: string) {
+  return await parseStringPromise(xml);
+}
 
 // --- Helpers: Date parsing & URL sanitization ---
 const MONTHS = {
@@ -137,6 +143,31 @@ interface AtomFeedDoc { feed?: { entry?: AtomEntry[] } }
 // In-memory transport caches and counters for metrics
 const etags = new Map<string, string>();
 const lastModified = new Map<string, string>();
+const httpCounters: Record<string, { c200: number; c304: number }> = {};
+function bumpCounter(source: string, kind: 200 | 304) {
+  const rec = httpCounters[source] || (httpCounters[source] = { c200: 0, c304: 0 });
+  if (kind === 200) rec.c200++;
+  else rec.c304++;
+}
+
+// Expose counters to metrics-lite
+export function getHttpConditionalCounters(): Record<string, { c200: number; c304: number }> {
+  return { ...httpCounters };
+}
+
+// Seed validators from persistence at boot
+export async function initHttpValidators(): Promise<void> {
+  try {
+    const all = await listValidators();
+    for (const [id, v] of Object.entries(all)) {
+      if (v.etag) etags.set(id.replace(/_/g, ' '), v.etag);
+      if (v.lastModified) lastModified.set(id.replace(/_/g, ' '), v.lastModified);
+    }
+    console.log('[httpCache][rss] seeded', { etags: etags.size, lastModified: lastModified.size });
+  } catch (e) {
+    console.warn('[httpCache][rss] seed failed', (e as any)?.message || e);
+  }
+}
 
 // Helper: merge per-source metrics into system.ingest_status (no schema change)
 async function updatePerSourceIngestStatus(update: {
@@ -427,10 +458,15 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
         const lm = getFn ? getFn('last-modified') : (hdrs?.['last-modified'] ?? hdrs?.lastModified ?? null);
         if (et) etags.set(feed.name, et);
         if (lm) lastModified.set(feed.name, lm);
+        if (et || lm) {
+          // Persist validators (fire-and-forget)
+          void setValidator(feed.name, { etag: et || undefined, lastModified: lm || undefined, updated_at: new Date().toISOString() }).catch(() => {});
+        }
       } catch { /* ignore header parse issues in tests/mocks */ }
     }
 
     if (response.status === 304) {
+      bumpCounter(feed.name, 304);
       await updatePerSourceIngestStatus({
         source: feed.name,
         fetched_at: new Date().toISOString(),
@@ -444,7 +480,10 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const parsed = await parseXML(responseText) as RSSFeed & AtomFeedDoc;
+    bumpCounter(feed.name, 200);
+    // Parse XML using worker pool with fallback to local parse
+    const pool = getXmlPool();
+    const parsed = await pool.parse(responseText, () => parseXmlLocally(responseText)) as RSSFeed & AtomFeedDoc;
     const channel = parsed.rss?.channel?.[0];
     
     // If standard RSS is unavailable, try Atom format (e.g., The Verge)
