@@ -1,0 +1,54 @@
+Dry-run Quarantine Plan for 2025-08-22
+Exclusions: backend/scripts/**, housekeeping/**, .env*, firebase.ts
+
+Total candidates (after exclusions): 49
+
+backend/jest.config.js => _quarantine/2025-08-22/backend/jest.config.js [medium] :: Unreferenced in static graph
+backend/src/ingest/twitterStub.ts => _quarantine/2025-08-22/backend/src/ingest/twitterStub.ts [medium] :: Unreferenced in static graph
+backend/src/ingest/xmlWorker.ts => _quarantine/2025-08-22/backend/src/ingest/xmlWorker.ts [medium] :: Unreferenced in static graph
+backend/src/utils/confidenceV2.ts => _quarantine/2025-08-22/backend/src/utils/confidenceV2.ts [medium] :: Unreferenced in static graph
+backend/src/utils/confirmations.ts => _quarantine/2025-08-22/backend/src/utils/confirmations.ts [medium] :: Unreferenced in static graph
+backend/src/utils/contentFit.ts => _quarantine/2025-08-22/backend/src/utils/contentFit.ts [medium] :: Unreferenced in static graph
+backend/src/utils/marketProxy.ts => _quarantine/2025-08-22/backend/src/utils/marketProxy.ts [medium] :: Unreferenced in static graph
+backend/src/_ingest/breakingScheduler.ts => _quarantine/2025-08-22/backend/src/_ingest/breakingScheduler.ts [medium] :: Unreferenced in static graph
+backend/test/admin-auth.test.ts => _quarantine/2025-08-22/backend/test/admin-auth.test.ts [medium] :: Unreferenced in static graph
+backend/test/api-debug.test.ts => _quarantine/2025-08-22/backend/test/api-debug.test.ts [medium] :: Unreferenced in static graph
+backend/test/breakingIngest.test.ts => _quarantine/2025-08-22/backend/test/breakingIngest.test.ts [medium] :: Unreferenced in static graph
+backend/test/breakingScheduler.test.ts => _quarantine/2025-08-22/backend/test/breakingScheduler.test.ts [medium] :: Unreferenced in static graph
+backend/test/confidenceV2.test.ts => _quarantine/2025-08-22/backend/test/confidenceV2.test.ts [medium] :: Unreferenced in static graph
+backend/test/confidenceV22.test.ts => _quarantine/2025-08-22/backend/test/confidenceV22.test.ts [medium] :: Unreferenced in static graph
+backend/test/factComposer.test.ts => _quarantine/2025-08-22/backend/test/factComposer.test.ts [medium] :: Unreferenced in static graph
+backend/test/feed.test.ts => _quarantine/2025-08-22/backend/test/feed.test.ts [medium] :: Unreferenced in static graph
+backend/test/helpers/env.ts => _quarantine/2025-08-22/backend/test/helpers/env.ts [medium] :: Unreferenced in static graph
+backend/test/helpers/mocks.ts => _quarantine/2025-08-22/backend/test/helpers/mocks.ts [medium] :: Unreferenced in static graph
+backend/test/helpers/setup.ts => _quarantine/2025-08-22/backend/test/helpers/setup.ts [medium] :: Unreferenced in static graph
+backend/test/impact.test.ts => _quarantine/2025-08-22/backend/test/impact.test.ts [medium] :: Unreferenced in static graph
+backend/test/impactV2.test.ts => _quarantine/2025-08-22/backend/test/impactV2.test.ts [medium] :: Unreferenced in static graph
+backend/test/impactV3.test.ts => _quarantine/2025-08-22/backend/test/impactV3.test.ts [medium] :: Unreferenced in static graph
+backend/test/metrics-lite.test.ts => _quarantine/2025-08-22/backend/test/metrics-lite.test.ts [medium] :: Unreferenced in static graph
+backend/test/rss-concurrency.test.ts => _quarantine/2025-08-22/backend/test/rss-concurrency.test.ts [medium] :: Unreferenced in static graph
+backend/test/rss-date-url.test.ts => _quarantine/2025-08-22/backend/test/rss-date-url.test.ts [medium] :: Unreferenced in static graph
+backend/test/server-listen.test.ts => _quarantine/2025-08-22/backend/test/server-listen.test.ts [medium] :: Unreferenced in static graph
+backend/test/storage.test.ts => _quarantine/2025-08-22/backend/test/storage.test.ts [medium] :: Unreferenced in static graph
+backend/test/verification.test.ts => _quarantine/2025-08-22/backend/test/verification.test.ts [medium] :: Unreferenced in static graph
+frontend/jest.config.js => _quarantine/2025-08-22/frontend/jest.config.js [medium] :: Unreferenced in static graph
+frontend/next-env.d.ts => _quarantine/2025-08-22/frontend/next-env.d.ts [medium] :: Unreferenced in static graph
+frontend/next.config.js => _quarantine/2025-08-22/frontend/next.config.js [medium] :: Unreferenced in static graph
+frontend/playwright.config.ts => _quarantine/2025-08-22/frontend/playwright.config.ts [medium] :: Unreferenced in static graph
+frontend/postcss.config.js => _quarantine/2025-08-22/frontend/postcss.config.js [medium] :: Unreferenced in static graph
+frontend/src/components/VerificationBadge.tsx => _quarantine/2025-08-22/frontend/src/components/VerificationBadge.tsx [medium] :: Unreferenced in static graph
+frontend/src/components/WatchlistModal.tsx => _quarantine/2025-08-22/frontend/src/components/WatchlistModal.tsx [medium] :: Unreferenced in static graph
+frontend/src/lib/fetcher.spec.ts => _quarantine/2025-08-22/frontend/src/lib/fetcher.spec.ts [medium] :: Unreferenced in static graph
+frontend/src/lib/time.test.ts => _quarantine/2025-08-22/frontend/src/lib/time.test.ts [medium] :: Unreferenced in static graph
+frontend/src/lib/utils.ts => _quarantine/2025-08-22/frontend/src/lib/utils.ts [medium] :: Unreferenced in static graph
+frontend/src/types/index.ts => _quarantine/2025-08-22/frontend/src/types/index.ts [medium] :: Unreferenced in static graph
+frontend/src/__e2e__/open-source.spec.ts => _quarantine/2025-08-22/frontend/src/__e2e__/open-source.spec.ts [medium] :: Unreferenced in static graph
+frontend/tailwind.config.js => _quarantine/2025-08-22/frontend/tailwind.config.js [medium] :: Unreferenced in static graph
+scripts/get-overall-latency.mjs => _quarantine/2025-08-22/misc/scripts/get-overall-latency.mjs [low] :: Script not referenced in repo
+scripts/latency-10min.mjs => _quarantine/2025-08-22/misc/scripts/latency-10min.mjs [low] :: Script not referenced in repo
+scripts/print-latency.mjs => _quarantine/2025-08-22/misc/scripts/print-latency.mjs [low] :: Script not referenced in repo
+scripts/run-latency-check.mjs => _quarantine/2025-08-22/misc/scripts/run-latency-check.mjs [low] :: Script not referenced in repo
+scripts/validate-fastlane-10min.mjs => _quarantine/2025-08-22/misc/scripts/validate-fastlane-10min.mjs [low] :: Script not referenced in repo
+scripts/validate-sse-120s-inject.mjs => _quarantine/2025-08-22/misc/scripts/validate-sse-120s-inject.mjs [low] :: Script not referenced in repo
+scripts/validate-sse-120s.mjs => _quarantine/2025-08-22/misc/scripts/validate-sse-120s.mjs [low] :: Script not referenced in repo
+scripts/verify-latency.mjs => _quarantine/2025-08-22/misc/scripts/verify-latency.mjs [low] :: Script not referenced in repo

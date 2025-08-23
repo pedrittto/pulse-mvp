@@ -5,6 +5,7 @@ import { scoreNews } from './utils/scoring';
 import { composeHeadline, composeSummary } from './utils/factComposer';
 import { isTradingRelevant } from './utils/tradingFilter';
 import { sseHub } from './realtime/sse';
+import { getBulkWriter, incEnqueued } from './lib/bulkWriter';
 
 // Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
 const sanitizePayload = (payload: any): any => {
@@ -48,6 +49,11 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
   
   const newsCollection = getDb().collection('news');
 
+  let i = 0;
+  const bw = getBulkWriter({
+    enabled: String(process.env.BULKWRITER_ENABLED || '0') === '1',
+    maxOpsPerSecond: parseInt(process.env.BULKWRITER_MAX_OPS_PER_SEC || '500', 10)
+  });
   for (const item of items) {
     try {
       // Check if document already exists (deduplication by document ID)
@@ -109,8 +115,17 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         }
       }
 
-      // Add new document
-      await docRef.set(safeItem);
+      // Add new document (BulkWriter for Tier-1 lane when enabled)
+      const isTier1 = Array.isArray(safeItem.sources) && safeItem.sources.length > 0 && typeof safeItem.sources[0] === 'string' && (
+        ['Bloomberg Markets','Reuters Business','AP Business','CNBC','Financial Times','PRNewswire','GlobeNewswire','SEC Filings','NASDAQ Trader News','NYSE Notices','Business Wire']
+          .includes(safeItem.sources[0])
+      );
+      if (bw && isTier1) {
+        try { (bw as any).set(docRef, safeItem, { merge: false }); incEnqueued(); }
+        catch { await docRef.set(safeItem); }
+      } else {
+        await docRef.set(safeItem);
+      }
       console.log('[ingest][write]', { 
         collection: 'news', 
         id: safeItem.id, 
@@ -119,9 +134,29 @@ export const addNewsItems = async (items: NewsItem[]): Promise<{ added: number; 
         primary_entity: safeItem.primary_entity,
         impact: safeItem.impact
       });
-      // Emit SSE event if enabled
-      try { sseHub.broadcastNewItem({ id: safeItem.id, ingested_at: safeItem.ingested_at }); } catch { /* ignore */ }
+      // Emit SSE event if enabled, with emitted_at
+      try {
+        const nowIso = new Date().toISOString();
+        sseHub.broadcastNewItem({ id: safeItem.id, ingested_at: safeItem.ingested_at, emitted_at: nowIso, source: (safeItem as any)?.source || undefined });
+        // Log SSE emit milestone into latency_metrics
+        try {
+          const pubMs = safeItem.published_at ? Date.parse(safeItem.published_at) : NaN;
+          const ingMs = safeItem.ingested_at ? Date.parse(safeItem.ingested_at) : NaN;
+          const tPublishMs = (Number.isFinite(pubMs) && Number.isFinite(ingMs)) ? Math.max(0, ingMs - pubMs) : null;
+          const db = getDb();
+          await db.collection('latency_metrics').add({
+            source: ((safeItem as any)?.source || (safeItem as any)?.sources?.[0]) ?? null,
+            source_published_at: safeItem.published_at ?? null,
+            ingested_at: safeItem.ingested_at ?? null,
+            arrival_at: nowIso, // treat SSE emit as arrival to delivery layer
+            t_publish_ms: tPublishMs,
+            timestamp: nowIso,
+            transport: 'sse_emit'
+          });
+        } catch { /* non-fatal */ }
+      } catch { /* ignore */ }
       added++;
+      if (bw && (++i % 500 === 0)) { await new Promise(r => setImmediate(r)); }
     } catch (error) {
       console.error(`Error adding news item ${item.id}:`, error);
       skipped++;

@@ -9,6 +9,15 @@ import { adminRoutes } from './routes/admin';
 import { scoreNews } from './utils/scoring';
 import { getConfig } from './config/env';
 import { sseHub } from './realtime/sse';
+import { getWarmupSummary } from './bootstrap/warmup';
+import { getReady } from './ops/ready';
+import { flushAndClose as flushBulkWriter } from './lib/bulkWriter';
+import { rssFeeds, getHostForSource } from './config/rssFeeds';
+import { getAdapter, listProviders } from './ingest/webhookRegistry';
+import { getSharedSecret } from './ingest/webhookSecrets';
+import { enqueueWebhook, getWebhookCounters } from './ingest/webhookQueue';
+import { renderPromMetrics } from './ops/promExporter';
+import { breakingScheduler } from './ingest/breakingScheduler';
 
 // Environment getter functions
 const getNodeEnv = () => process.env.NODE_ENV;
@@ -274,6 +283,19 @@ router.post('/admin/ingest-now', async (_req, res) => {
       code: error instanceof Error ? error.name : 'UNKNOWN_ERROR'
     });
     return;
+  }
+});
+
+// Admin endpoint to poke scheduler for one immediate cycle
+router.post('/admin/scheduler/poke', (req, res) => {
+  try {
+    if (process.env.ADMIN_API_ENABLED !== '1') return res.status(403).json({ error: 'admin disabled' });
+    const token = process.env.ADMIN_API_TOKEN;
+    if (token && req.get('X-Admin-Token') !== token) return res.status(401).json({ error: 'unauthorized' });
+    breakingScheduler.runOnce().then(r => res.status(200).json({ ok: true, result: r }))
+      .catch(e => res.status(500).json({ ok: false, error: String((e && e.message) || e) }));
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String((e as any)?.message || e) });
   }
 });
 
@@ -661,9 +683,26 @@ router.get('/feed', async (req, res) => {
     const debugTime = debugParams.includes('time');
     const debugVerification = debugParams.includes('verif');
     
-    // Get news items from Firestore (newest first)
+    // Get news items from Firestore (newest first) with optional cursor pagination
     const newsLimit = limit ? parseInt(limit as string) : 20;
-    let items = await getNewsItems(newsLimit);
+    const cursorB64 = typeof (req.query as any).cursor === 'string' ? String((req.query as any).cursor) : '';
+    const db = getDb();
+    let q: any = db.collection('news').orderBy('ingested_at', 'desc').orderBy('__name__', 'desc').limit(newsLimit);
+    if (cursorB64) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursorB64, 'base64').toString('utf8'));
+        const ts = decoded?.t; const id = decoded?.id;
+        if (typeof ts === 'string' && typeof id === 'string') {
+          const ref = db.collection('news').doc(id);
+          q = q.startAfter(ts, ref);
+        }
+      } catch { /* ignore bad cursor */ }
+    }
+    const snap = await q.get();
+    const docs: any[] = [];
+    if (snap && Array.isArray((snap as any).docs)) docs.push(...(snap as any).docs);
+    else if (snap && typeof (snap as any).forEach === 'function') { (snap as any).forEach((d: any) => docs.push(d)); }
+    let items = docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
     
     // Filter for new version items only (v2) - include items without version field for backward compatibility
     items = items.filter(item => !item.version || item.version === 'v2');
@@ -835,7 +874,7 @@ router.get('/feed', async (req, res) => {
             items = items.filter(item => {
               // Check if any ticker matches
               const tickerMatch = tickers.some((ticker: string) => 
-                ticker && item.tickers.some(itemTicker => 
+                ticker && item.tickers.some((itemTicker: string) => 
                   itemTicker.toUpperCase() === ticker.toUpperCase()
                 )
               );
@@ -874,10 +913,17 @@ router.get('/feed', async (req, res) => {
       console.log('[api][feed]', { durationMs: Math.round(elapsedMs), items: items.length });
     }
 
-    res.json({
-      items,
-      total: items.length
-    });
+    // Cursor page block (opaque next cursor if more)
+    let nextCursor: string | null = null;
+    if (docs.length === newsLimit) {
+      try {
+        const last = docs[docs.length - 1];
+        const t = (last?.data && typeof last.data === 'function') ? last.data()?.ingested_at : last?.ingested_at;
+        const id = last?.id;
+        if (typeof t === 'string' && typeof id === 'string') nextCursor = Buffer.from(JSON.stringify({ t, id }), 'utf8').toString('base64');
+      } catch {}
+    }
+    res.json({ items, total: items.length, page: { cursor: nextCursor, limit: newsLimit, has_more: !!nextCursor } });
     return;
   } catch (error) {
     console.error('Error in /feed endpoint:', error);
@@ -889,6 +935,112 @@ router.get('/feed', async (req, res) => {
       error: { message: 'Internal server error', code: 'INTERNAL_ERROR' }
     });
     return;
+  }
+});
+
+// GET /breaking-feed - same schema as /feed but only items from eligible (non-demoted) sources
+router.get('/breaking-feed', async (req, res) => {
+  const latencyHeadersEnabled = process.env.API_LATENCY_HEADERS === '1';
+  const startNs = process.hrtime.bigint();
+  try {
+    const { limit } = req.query as any;
+    if (limit && (isNaN(Number(limit)) || Number(limit) < 1 || Number(limit) > 100)) {
+      if (latencyHeadersEnabled) {
+        const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+        res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+      }
+      return res.status(400).json({ error: { message: 'Invalid limit. Must be a number between 1 and 100' } });
+    }
+
+    const newsLimit = limit ? parseInt(String(limit)) : 20;
+    const cursorB64 = typeof (req.query as any).cursor === 'string' ? String((req.query as any).cursor) : '';
+    const db2 = getDb();
+    let q2: any = db2.collection('news').orderBy('ingested_at', 'desc').orderBy('__name__', 'desc').limit(newsLimit);
+    if (cursorB64) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursorB64, 'base64').toString('utf8'));
+        const ts = decoded?.t; const id = decoded?.id;
+        if (typeof ts === 'string' && typeof id === 'string') {
+          const ref = db2.collection('news').doc(id);
+          q2 = q2.startAfter(ts, ref);
+        }
+      } catch {}
+    }
+    const snap2 = await q2.get();
+    const docs2: any[] = [];
+    if (snap2 && Array.isArray((snap2 as any).docs)) docs2.push(...(snap2 as any).docs);
+    else if (snap2 && typeof (snap2 as any).forEach === 'function') { (snap2 as any).forEach((d: any) => docs2.push(d)); }
+    let items = docs2.map(d => ({ id: d.id, ...(d.data() || {}) }));
+
+    // Determine eligibility
+    const demoted = new Set<string>((breakingScheduler?.getDemotedSources?.() || []).map(String));
+    const threshold = parseInt(process.env.BREAKING_DEMOTE_P50_MS || '60000', 10);
+    const windowMin = parseInt(process.env.BREAKING_DEMOTE_WINDOW_MIN || '30', 10);
+    const sinceIso = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+
+    // Collect unique sources from items
+    const uniqueSources = Array.from(new Set(items.map((it: any) => (Array.isArray(it.sources) && it.sources[0]) || (it.source as string) || '').filter(Boolean)));
+
+    // Compute p50 per source (best-effort)
+    const db = getDb();
+    const p50BySource = new Map<string, number | null>();
+    for (const src of uniqueSources) {
+      try {
+        const snap = await db.collection('latency_metrics')
+          .where('source', '==', src)
+          .where('timestamp', '>=', sinceIso)
+          .get();
+        const vals: number[] = [];
+        if (snap && Array.isArray((snap as any).docs)) {
+          (snap as any).docs.forEach((d: any) => { const t = d.data()?.t_publish_ms; if (typeof t === 'number' && t >= 0) vals.push(t); });
+        } else if (snap && typeof (snap as any).forEach === 'function') {
+          (snap as any).forEach((d: any) => { const t = d.data()?.t_publish_ms; if (typeof t === 'number' && t >= 0) vals.push(t); });
+        }
+        vals.sort((a,b)=>a-b);
+        const p50 = vals.length ? vals[Math.floor(vals.length * 0.5)] : null;
+        p50BySource.set(src, p50);
+      } catch {
+        p50BySource.set(src, null);
+      }
+    }
+
+    const eligible = (src: string): boolean => {
+      if (!src) return false;
+      if (demoted.has(src)) return false;
+      // Gate social transport for Breaking based on env and score threshold
+      if (String(process.env.SOCIAL_BREAKING_ENABLED || (process.env.SOCIAL_ENABLED==='1'?'1':'0')) !== '1') {
+        if (String(src).toLowerCase() === 'x') return false;
+      }
+      const p50 = p50BySource.get(src);
+      if (p50 == null) return true; // best-effort: if unknown, do not exclude unless demoted
+      return p50 <= threshold;
+    };
+
+    items = items.filter((it: any) => eligible((Array.isArray(it.sources) && it.sources[0]) || (it.source as string) || ''));
+
+    if (latencyHeadersEnabled) {
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+      console.log('[api][breaking-feed][timing]', { durationMs: Math.round(elapsedMs), limit: newsLimit, items: items.length });
+    }
+
+    let nextCursor2: string | null = null;
+    if (docs2.length === newsLimit) {
+      try {
+        const last = docs2[docs2.length - 1];
+        const t = (last?.data && typeof last.data === 'function') ? last.data()?.ingested_at : last?.ingested_at;
+        const id = last?.id;
+        if (typeof t === 'string' && typeof id === 'string') nextCursor2 = Buffer.from(JSON.stringify({ t, id }), 'utf8').toString('base64');
+      } catch {}
+    }
+    return res.json({ items, total: items.length, page: { cursor: nextCursor2, limit: newsLimit, has_more: !!nextCursor2 } });
+  } catch (error) {
+    console.error('Error in /breaking-feed endpoint:', error);
+    if (latencyHeadersEnabled) {
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      res.set('X-Backend-Duration-Ms', elapsedMs.toFixed(1));
+    }
+    return res.status(500).json({ error: { message: 'Internal server error', code: 'INTERNAL_ERROR' } });
   }
 });
 
@@ -1055,43 +1207,485 @@ router.get('/metrics-summary', async (_req, res) => {
       .orderBy('timestamp', 'desc')
       .limit(500)
       .get();
-    const per: Record<string, { pub: number[]; pulse: number[] }> = {};
+    const per: Record<string, { pub: number[]; pulse: number[]; transports?: string[]; last_age_min?: number | null; dropped_by_date?: number } > = {};
     if (snap && Array.isArray((snap as any).docs)) {
       (snap as any).docs.forEach((d: any) => {
         const data = d.data();
         const s = data.source as string;
         if (!s) return;
-        per[s] = per[s] || { pub: [], pulse: [] };
-        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        const isSynthetic = data.transport === 'test' || (Array.isArray(data.tags) && data.tags.includes('test'));
+        per[s] = per[s] || { pub: [], pulse: [], transports: [], last_age_min: null, dropped_by_date: 0 };
+        if (!isSynthetic && typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
         if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+        if (data.transport) per[s].transports!.push(data.transport);
       });
     } else if (snap && typeof (snap as any).forEach === 'function') {
       (snap as any).forEach((d: any) => {
         const data = d.data();
         const s = data.source as string;
         if (!s) return;
-        per[s] = per[s] || { pub: [], pulse: [] };
-        if (typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
+        const isSynthetic = data.transport === 'test' || (Array.isArray(data.tags) && data.tags.includes('test'));
+        per[s] = per[s] || { pub: [], pulse: [], transports: [], last_age_min: null, dropped_by_date: 0 };
+        if (!isSynthetic && typeof data.t_publish_ms === 'number') per[s].pub.push(data.t_publish_ms);
         if (typeof data.t_exposure_ms === 'number') per[s].pulse.push(data.t_exposure_ms);
+        if (data.transport) per[s].transports!.push(data.transport);
       });
     }
     const p50 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.5)] : null;
     const p90 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.9)] : null;
     const bySource: any = {};
     const pubAgg: number[] = []; const pulseAgg: number[] = [];
+    const driftEnabled = String(process.env.DRIFT_CORRECT_METRICS || '0') === '1';
+    const hostMap = require('./config/rssFeeds') as any;
+    const getHostForSource = typeof hostMap.getHostForSource === 'function' ? hostMap.getHostForSource : (()=>null);
+    const driftSnap = driftEnabled ? (require('./ops/driftMonitor').getDriftSnapshot?.() || { by_host: {} }) : { by_host: {} };
     Object.entries(per).forEach(([k,v]) => {
       const sp50 = p50(v.pub); const sp90 = p90(v.pub);
       const xp50 = p50(v.pulse); const xp90 = p90(v.pulse);
-      bySource[k] = { publisher_p50: sp50, publisher_p90: sp90, pulse_p50: xp50, pulse_p90: xp90, samples: v.pub.length };
+      const rec: any = { publisher_p50: sp50, publisher_p90: sp90, pulse_p50: xp50, pulse_p90: xp90, samples: v.pub.length };
+      if (driftEnabled && Array.isArray(v.pub) && v.pub.length) {
+        try {
+          const host = getHostForSource(k);
+          const skew = (host && driftSnap.by_host && driftSnap.by_host[host] && typeof driftSnap.by_host[host].p50_ms === 'number') ? (driftSnap.by_host[host].p50_ms as number) : 0;
+          if (skew) {
+            const corrected = v.pub.map((ms:number)=> Math.max(0, ms - skew)).sort((a,b)=>a-b);
+            rec.publisher_p50_corrected = corrected.length ? corrected[Math.floor(corrected.length*0.5)] : null;
+            rec.publisher_p90_corrected = corrected.length ? corrected[Math.floor(corrected.length*0.9)] : null;
+          }
+        } catch {}
+      }
+      bySource[k] = rec;
       if (sp50 != null) pubAgg.push(sp50);
       if (xp50 != null) pulseAgg.push(xp50);
     });
     const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a,b)=>a+b,0)/arr.length) : null;
     const aggregate = { publisher: { p50: avg(pubAgg) }, pulse: { p50: avg(pulseAgg) } };
-    res.json({ ok: true, by_source: bySource, aggregate });
+    const threshold = parseInt(process.env.BREAKING_DEMOTE_P50_MS || '60000', 10);
+    const breaking_eligible: Record<string, boolean> = {};
+    Object.entries(bySource).forEach(([k, v]: any) => {
+      const p50 = v?.publisher_p50;
+      breaking_eligible[k] = (typeof p50 === 'number') ? (p50 <= threshold) : false;
+    });
+    const demoted = (breakingScheduler && typeof breakingScheduler.getDemotedSources === 'function') ? breakingScheduler.getDemotedSources() : [];
+    res.json({ ok: true, by_source: bySource, aggregate, breaking_eligible, demoted });
   } catch (e) {
     console.error('[metrics-summary] error:', e);
     res.status(500).json({ ok: false });
+  }
+});
+
+// GET /warmup-status - return last warmup summary (if any)
+router.get('/warmup-status', (_req, res) => {
+  try { res.json(getWarmupSummary()); } catch { res.json({ ran: false }); }
+});
+
+// Optional SSE status endpoint
+router.get('/sse/status', (_req, res) => {
+  try {
+    // Import lazily to avoid circular import issues
+    const hub = require('./realtime/sse').sseHub;
+    res.json({ ok: true, stats: hub.getStats?.() });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+// Optional: Watchdog status
+router.get('/watchdog/status', (_req, res) => {
+  try {
+    const { getWatchdogState } = require('./watchdog/sloWatchdog');
+    const st = getWatchdogState?.();
+    res.json({ ok: true, state: st });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+// Effective config snapshot (sanitized, additive)
+router.get('/config/effective', (_req, res) => {
+  const pick = (k: string, d?: any) => (process.env[k] !== undefined ? process.env[k] : d);
+  const cfg = {
+    PORT: pick('PORT'),
+    FASTLANE_ENABLED: pick('FASTLANE_ENABLED','0'),
+    RSS_PARALLEL: pick('RSS_PARALLEL'),
+    TIER1_HTTP_TIMEOUT_MS: pick('TIER1_HTTP_TIMEOUT_MS'),
+    LANE_PER_HOST_MAX: pick('LANE_PER_HOST_MAX'),
+    BREAKING_AUTODEMOTE: pick('BREAKING_AUTODEMOTE','0'),
+    BREAKING_DEMOTE_WINDOW_MIN: pick('BREAKING_DEMOTE_WINDOW_MIN'),
+    BREAKING_DEMOTE_P50_MS: pick('BREAKING_DEMOTE_P50_MS'),
+    SSE_ENABLED: pick('SSE_ENABLED','0'),
+    SSE_RING_SIZE: pick('SSE_RING_SIZE'),
+    SSE_HEARTBEAT_MS: pick('SSE_HEARTBEAT_MS'),
+    BURST_WINDOW_MS: pick('BURST_WINDOW_MS'),
+    BURST_MIN_INTERVAL_MS: pick('BURST_MIN_INTERVAL_MS'),
+    SPLAY_MAX_MS: pick('SPLAY_MAX_MS'),
+    BULKWRITER_ENABLED: pick('BULKWRITER_ENABLED','0'),
+    BULKWRITER_MAX_OPS_PER_SEC: pick('BULKWRITER_MAX_OPS_PER_SEC'),
+    HTTP2_ENABLED: pick('HTTP2_ENABLED','0'),
+    HTTP_KEEPALIVE_ENABLED: pick('HTTP_KEEPALIVE_ENABLED','1'),
+    HTTP_CONDITIONAL_GET: pick('HTTP_CONDITIONAL_GET','0'),
+    WATCHDOG_ENABLED: pick('WATCHDOG_ENABLED','0'),
+    WATCHDOG_INTERVAL_SEC: pick('WATCHDOG_INTERVAL_SEC'),
+    WATCHDOG_WINDOW_MIN: pick('WATCHDOG_WINDOW_MIN'),
+    WATCHDOG_SLO_P50_MS: pick('WATCHDOG_SLO_P50_MS'),
+    WATCHDOG_SLO_P90_MS: pick('WATCHDOG_SLO_P90_MS'),
+    WATCHDOG_OPS_ENABLED: pick('WATCHDOG_OPS_ENABLED','0'),
+    WATCHDOG_OPS_INTERVAL_SEC: pick('WATCHDOG_OPS_INTERVAL_SEC'),
+    WATCHDOG_EL_LAG_P95_MS: pick('WATCHDOG_EL_LAG_P95_MS'),
+    WATCHDOG_GC_P95_MS: pick('WATCHDOG_GC_P95_MS'),
+    WATCHDOG_CPU_P95_PCT: pick('WATCHDOG_CPU_P95_PCT'),
+    WATCHDOG_OPS_MIN_CONSECUTIVE: pick('WATCHDOG_OPS_MIN_CONSECUTIVE'),
+    DRIFT_WINDOW_MIN: pick('DRIFT_WINDOW_MIN'),
+    DRIFT_ALERT_P95_MS: pick('DRIFT_ALERT_P95_MS'),
+    DRIFT_CORRECT_METRICS: pick('DRIFT_CORRECT_METRICS','0'),
+    WARMUP_TIER1: pick('WARMUP_TIER1','0'),
+    WARMUP_CONCURRENCY: pick('WARMUP_CONCURRENCY'),
+    DEMOTE_WINDOW_MIN: pick('DEMOTE_WINDOW_MIN'),
+    DEMOTE_THRESHOLD_MS: pick('DEMOTE_THRESHOLD_MS'),
+    PROMOTE_THRESHOLD_MS: pick('PROMOTE_THRESHOLD_MS'),
+    PROMOTE_MAX_P90_MS: pick('PROMOTE_MAX_P90_MS'),
+    PROMOTE_MIN_SAMPLES: pick('PROMOTE_MIN_SAMPLES'),
+    DEMOTE_MIN_COOLDOWN_MS: pick('DEMOTE_MIN_COOLDOWN_MS'),
+    DEMOTE_PENALTY_FACTOR: pick('DEMOTE_PENALTY_FACTOR'),
+    DEMOTE_MAX_COOLDOWN_MS: pick('DEMOTE_MAX_COOLDOWN_MS'),
+    ADMIN_API_ENABLED: pick('ADMIN_API_ENABLED','0'),
+    DRAIN_FETCH_TIMEOUT_MS: pick('DRAIN_FETCH_TIMEOUT_MS','5000'),
+    DRAIN_SSE_CLOSE_MS: pick('DRAIN_SSE_CLOSE_MS','2000')
+  } as any;
+  res.json({ ok: true, config: cfg });
+});
+
+// Effective RSS sources with flags (read-only)
+router.get('/sources/effective', (_req, res) => {
+  try {
+    const { rssFeeds } = require('./config/rssFeeds');
+    const list = (rssFeeds || []).map((s: any) => ({ name: s.name, url: s.url, enabled: s.enabled !== false, fastlane: s.fastlane !== false }));
+    res.json({ ok: true, sources: list });
+  } catch {
+    res.status(500).json({ ok: false });
+  }
+});
+
+// Admin drain (guarded)
+router.post('/admin/drain', async (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    // Pause scheduler
+    try { breakingScheduler.stop(); } catch {}
+    // Stop new SSE clients and announce
+    try { sseHub.stopAccepting(); sseHub.announceAndCloseAll(parseInt(process.env.DRAIN_SSE_CLOSE_MS || '2000', 10)); } catch {}
+    // Flush BulkWriter
+    try { await flushBulkWriter(); } catch {}
+    res.status(202).json({ draining: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: (e as any)?.message || 'error' });
+  }
+});
+
+// Webhook ingestion endpoint
+router.post('/ingest/webhook/:provider', express.text({ type: '*/*', limit: `${parseInt(process.env.WEBHOOK_MAX_BODY_KB || '256', 10)}kb` }), async (req, res) => {
+  try {
+    if (process.env.WEBHOOK_INGEST_ENABLED !== '1') return res.status(404).json({ ok: false });
+    const provider = String(req.params.provider || '').toLowerCase();
+    const allowed = (process.env.WEBHOOK_PROVIDERS || '').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+    if (allowed.length && !allowed.includes(provider)) return res.status(404).json({ ok: false });
+    const adapter = getAdapter(provider);
+    if (!adapter) return res.status(404).json({ ok: false });
+    const headers: Record<string,string> = {};
+    Object.entries(req.headers).forEach(([k,v])=> headers[k.toLowerCase()] = Array.isArray(v) ? v.join(',') : String(v || ''));
+    const body = typeof req.body === 'string' ? req.body : '';
+    // HMAC verification
+    if (process.env.WEBHOOK_HMAC_REQUIRED === '1') {
+      const algo = (process.env.WEBHOOK_HMAC_ALGO || 'sha256').toLowerCase();
+      const sig = headers['x-signature'] || '';
+      const ts = headers['x-timestamp'];
+      const secret = getSharedSecret(provider);
+      if (!secret) return res.status(401).json({ ok: false });
+      // replay window
+      if (ts) { const t = Date.parse(ts); if (!Number.isFinite(t) || Math.abs(Date.now() - t) > 5*60*1000) return res.status(401).json({ ok: false, error: 'replay' }); }
+      const crypto = require('node:crypto');
+      const mac = crypto.createHmac(algo, secret).update(body + (ts ? ts : '')).digest('hex');
+      const expected = `${algo}=${mac}`;
+      if (sig !== expected) return res.status(401).json({ ok: false });
+    }
+    // enqueue for async processing
+    enqueueWebhook(provider, headers, body);
+    res.status(202).json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false }); }
+});
+
+// Admin: webhook providers (guarded)
+router.get('/admin/webhook/providers', (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try { res.json({ ok: true, providers: listProviders() }); } catch { res.status(500).json({ ok: false }); }
+});
+
+// Admin: webhook test (guarded, parse-only)
+router.post('/admin/webhook/test/:provider', express.text({ type: '*/*', limit: `${parseInt(process.env.WEBHOOK_MAX_BODY_KB || '256', 10)}kb` }), async (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const provider = String(req.params.provider || '').toLowerCase();
+    const adapter = getAdapter(provider);
+    if (!adapter) return res.status(404).json({ ok: false });
+    const headers: Record<string,string> = {}; Object.entries(req.headers).forEach(([k,v])=> headers[k.toLowerCase()] = Array.isArray(v) ? v.join(',') : String(v || ''));
+    const body = typeof req.body === 'string' ? req.body : '';
+    const parsed = await adapter.parse(headers, body);
+    res.json({ ok: true, parsed });
+  } catch (e:any) { res.status(400).json({ ok: false, error: e?.message || 'parse error' }); }
+});
+
+// Prometheus exporter (additive)
+router.get('/metrics-prom', async (_req, res) => {
+  try {
+    const text = await renderPromMetrics();
+    res.set('Content-Type','text/plain; version=0.0.4; charset=utf-8');
+    res.send(text);
+  } catch (e) {
+    res.status(500).send('# error');
+  }
+});
+
+// Admin kill-switches (guarded)
+router.post('/admin/toggle-breaking', (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const enabled = !!(req.body && typeof req.body.enabled === 'boolean' ? req.body.enabled : true);
+    (breakingScheduler as any)._admin_breaking_override = enabled ? undefined : false;
+    res.status(204).end();
+  } catch { res.status(500).json({ ok: false }); }
+});
+
+router.post('/admin/clear-demotions', (_req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && _req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    try { (breakingScheduler as any)['demotedSources']?.clear?.(); } catch {}
+    try { (breakingScheduler as any)['demoted']?.clear?.(); } catch {}
+    console.log('[admin] demotions cleared');
+    res.status(204).end();
+  } catch { res.status(500).json({ ok: false }); }
+});
+
+// Admin watchlist (guarded)
+router.get('/admin/watchlist', async (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const snap = await getDb().collection('watchlist').get();
+    const items: any[] = [];
+    if (snap && Array.isArray((snap as any).docs)) { (snap as any).docs.forEach((d:any)=> items.push({ id: d.id, ...(d.data()||{}) })); }
+    else if (snap && typeof (snap as any).forEach === 'function') { (snap as any).forEach((d:any)=> items.push({ id: d.id, ...(d.data()||{}) })); }
+    res.json({ ok: true, items });
+  } catch (e) { res.status(500).json({ ok: false }); }
+});
+
+router.post('/admin/watchlist/upsert', async (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const { id, type, terms, enabled } = req.body || {};
+    if (!id) return res.status(400).json({ ok: false, error: 'missing id' });
+    const doc = { type: (type === 'ticker' ? 'ticker' : 'keyword'), terms: Array.isArray(terms) ? terms.map(String) : [String(id)], enabled: enabled !== false };
+    await getDb().collection('watchlist').doc(String(id)).set(doc, { merge: true });
+    res.status(204).end();
+  } catch (e) { res.status(500).json({ ok: false }); }
+});
+
+router.post('/admin/watchlist/remove', async (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN;
+  if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const { id } = req.body || {};
+    if (!id) return res.status(400).json({ ok: false, error: 'missing id' });
+    await getDb().collection('watchlist').doc(String(id)).delete();
+    res.status(204).end();
+  } catch (e) { res.status(500).json({ ok: false }); }
+});
+
+// Admin: controller status and controls (guarded)
+router.get('/admin/controller/status', (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN; if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try {
+    const ctl = (require('.') as any).app?._ctl || (global as any)._ctl;
+    const st = ctl && typeof ctl.getState==='function' ? ctl.getState() : null;
+    res.json({ ok: true, state: st });
+  } catch { res.status(500).json({ ok: false }); }
+});
+
+router.post('/admin/controller/clear', (req, res) => {
+  if (process.env.ADMIN_API_ENABLED !== '1') return res.status(404).json({ ok: false });
+  const token = process.env.ADMIN_API_TOKEN; if (token && req.header('X-Admin-Token') !== token) return res.status(401).json({ ok: false });
+  try { (require('./ingest/breakingScheduler').breakingScheduler as any)?.applyOverrides?.({}); res.status(204).end(); } catch { res.status(500).json({ ok: false }); }
+});
+
+// Render beacon endpoint (non-blocking, additive)
+router.post('/beacon/render', async (req, res) => {
+  try {
+    const body = (req as any).body || {};
+    const id = typeof body.id === 'string' ? body.id : undefined;
+    const source = typeof body.source === 'string' ? body.source : undefined;
+    const emitted_at = typeof body.emitted_at === 'string' ? body.emitted_at : undefined;
+    const received_at = typeof body.received_at === 'string' ? body.received_at : undefined;
+    const rendered_at = typeof body.rendered_at === 'string' ? body.rendered_at : undefined;
+    const delta_receive_ms = Number.isFinite(body.delta_receive_ms) ? Number(body.delta_receive_ms) : undefined;
+    const delta_render_ms = Number.isFinite(body.delta_render_ms) ? Number(body.delta_render_ms) : undefined;
+
+    // Respond immediately; process async
+    res.status(204).end();
+
+    try {
+      const db = require('../lib/firestore').getDb();
+      const doc: any = {
+        ...(id ? { id } : {}),
+        ...(source ? { source } : {}),
+        ...(emitted_at ? { emitted_at } : {}),
+        ...(received_at ? { received_at } : {}),
+        ...(rendered_at ? { rendered_at } : {}),
+        ...(delta_receive_ms != null ? { delta_receive_ms } : {}),
+        ...(delta_render_ms != null ? { delta_render_ms } : {}),
+        ingested_at: new Date().toISOString()
+      };
+      await db.collection('render_metrics').add(doc);
+      try { require('../realtime/renderAgg').ingestRenderSample(doc); } catch {}
+    } catch (e) { /* ignore errors */ }
+  } catch {
+    // best-effort
+    try { res.status(204).end(); } catch {}
+  }
+});
+
+// GET /kpi-breaking?window_min=30
+router.get('/kpi-breaking', async (req, res) => {
+  try {
+    const raw = String(req.query.window_min || '');
+    const envDefault = parseInt(process.env.BREAKING_DEMOTE_WINDOW_MIN || '30', 10);
+    let windowMin = parseInt(raw || String(envDefault || 30), 10);
+    if (!Number.isFinite(windowMin)) windowMin = 30;
+    windowMin = Math.max(5, Math.min(180, windowMin));
+
+    const sinceIso = new Date(Date.now() - windowMin * 60 * 1000).toISOString();
+    const db = getDb();
+    const snap = await db.collection('latency_metrics')
+      .where('timestamp', '>=', sinceIso)
+      .get();
+
+    const bySource: Record<string, number[]> = {};
+    // Collect publish latencies by source
+    if (snap && Array.isArray((snap as any).docs)) {
+      (snap as any).docs.forEach((d: any) => {
+        const data = d.data();
+        const s = data?.source;
+        const t = data?.t_publish_ms;
+        if (typeof s === 'string' && typeof t === 'number' && t >= 0) {
+          (bySource[s] ||= []).push(t);
+        }
+      });
+    } else if (snap && typeof (snap as any).forEach === 'function') {
+      (snap as any).forEach((d: any) => {
+        const data = d.data();
+        const s = data?.source;
+        const t = data?.t_publish_ms;
+        if (typeof s === 'string' && typeof t === 'number' && t >= 0) {
+          (bySource[s] ||= []).push(t);
+        }
+      });
+    }
+
+    const p50 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.5)] : null;
+    const p90 = (arr: number[]) => arr.length ? arr.slice().sort((a,b)=>a-b)[Math.floor(arr.length*0.9)] : null;
+
+    const threshold = parseInt(process.env.BREAKING_DEMOTE_P50_MS || '60000', 10);
+    const sloP50 = 60000;
+    const sloP90 = 120000;
+
+    const sources: Record<string, { publisher_p50: number | null; publisher_p90: number | null; eligible: boolean; samples: number; publisher_p50_corrected?: number | null; publisher_p90_corrected?: number | null }> = {};
+    const eligibleSamples: number[] = [];
+    const driftEnabled2 = String(process.env.DRIFT_CORRECT_METRICS || '0') === '1';
+    const hostMap2 = require('./config/rssFeeds') as any;
+    const getHostForSource2 = typeof hostMap2.getHostForSource === 'function' ? hostMap2.getHostForSource : (()=>null);
+    const driftSnap2 = driftEnabled2 ? (require('./ops/driftMonitor').getDriftSnapshot?.() || { by_host: {} }) : { by_host: {} };
+    const correctedEligible: number[] = [];
+
+    Object.entries(bySource).forEach(([name, arr]) => {
+      const sorted = arr.slice().sort((a,b)=>a-b);
+      const sP50 = sorted.length ? sorted[Math.floor(sorted.length*0.5)] : null;
+      const sP90 = sorted.length ? sorted[Math.floor(sorted.length*0.9)] : null;
+      const eligible = (sP50 != null) ? (sP50 <= threshold) : false;
+      const rec: any = { publisher_p50: sP50, publisher_p90: sP90, eligible, samples: sorted.length };
+      if (driftEnabled2 && sorted.length) {
+        try {
+          const host = getHostForSource2(name);
+          const skew = (host && driftSnap2.by_host && driftSnap2.by_host[host] && typeof driftSnap2.by_host[host].p50_ms === 'number') ? (driftSnap2.by_host[host].p50_ms as number) : 0;
+          if (skew) {
+            const corrected = sorted.map((ms:number)=> Math.max(0, ms - skew)).sort((a,b)=>a-b);
+            rec.publisher_p50_corrected = corrected.length ? corrected[Math.floor(corrected.length*0.5)] : null;
+            rec.publisher_p90_corrected = corrected.length ? corrected[Math.floor(corrected.length*0.9)] : null;
+            if (eligible) correctedEligible.push(...corrected);
+          } else {
+            if (eligible) correctedEligible.push(...sorted);
+          }
+        } catch { if (eligible) correctedEligible.push(...sorted); }
+      }
+      sources[name] = rec;
+      if (eligible) eligibleSamples.push(...sorted);
+    });
+
+    // Demoted from scheduler
+    const demoted = (breakingScheduler && typeof breakingScheduler.getDemotedSources === 'function') ? breakingScheduler.getDemotedSources() : [];
+
+    // Global breaking p50/p90 over eligible samples only
+    const breaking_p50_ms = eligibleSamples.length ? p50(eligibleSamples) : null;
+    const breaking_p90_ms = eligibleSamples.length ? p90(eligibleSamples) : null;
+    const passes = (breaking_p50_ms != null && breaking_p90_ms != null)
+      ? (breaking_p50_ms <= sloP50 && breaking_p90_ms <= sloP90)
+      : false;
+    let breaking_p50_ms_corrected: number | null = null;
+    let breaking_p90_ms_corrected: number | null = null;
+    let passes_corrected: boolean | undefined = undefined;
+    if (driftEnabled2) {
+      const arr = correctedEligible.length ? correctedEligible.slice().sort((a,b)=>a-b) : [];
+      breaking_p50_ms_corrected = arr.length ? arr[Math.floor(arr.length*0.5)] : null;
+      breaking_p90_ms_corrected = arr.length ? arr[Math.floor(arr.length*0.9)] : null;
+      if (breaking_p50_ms_corrected != null && breaking_p90_ms_corrected != null) {
+        passes_corrected = (breaking_p50_ms_corrected <= sloP50 && breaking_p90_ms_corrected <= sloP90);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      window_min: windowMin,
+      // Top-level mirrors for convenience/back-compat with tooling
+      breaking_p50_ms,
+      breaking_p90_ms,
+      ...(driftEnabled2 ? { breaking_p50_ms_corrected, breaking_p90_ms_corrected } : {}),
+      slo: {
+        p50_target_ms: sloP50,
+        p90_target_ms: sloP90,
+        breaking_p50_ms,
+        breaking_p90_ms,
+        passes,
+        ...(driftEnabled2 ? { breaking_p50_ms_corrected, breaking_p90_ms_corrected, passes_corrected } : {})
+      },
+      sources,
+      demoted,
+      generated_at: new Date().toISOString()
+    });
+  } catch (e) {
+    console.error('[kpi-breaking] error:', e);
+    return res.status(500).json({ ok: false });
   }
 });
 

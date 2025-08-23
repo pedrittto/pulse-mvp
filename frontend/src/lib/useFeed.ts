@@ -1,7 +1,8 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import useSWR, { mutate } from 'swr'
 import { FeedResponse, FilterType } from '@/types'
 import { fetcher } from './fetcher'
+import { subscribeNewItems } from './sse'
 
 interface UseFeedOptions {
   apiBaseUrl: string
@@ -27,14 +28,15 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
   }, [apiBaseUrl, filter, search, limit])
 
   // Get refresh interval from environment variable
-  const refreshInterval = parseInt(process.env.NEXT_PUBLIC_FEED_REFRESH_MS || '60000', 10)
+  const baseRefreshInterval = parseInt(process.env.NEXT_PUBLIC_FEED_REFRESH_MS || '60000', 10)
+  const useSse = String(process.env.NEXT_PUBLIC_USE_SSE || 'true').toLowerCase() === 'true'
 
   // SWR hook with auto-refresh
   const { data: feedItems, error, isLoading, isValidating } = useSWR<any[]>(
     buildApiUrl(),
     fetcher,
     {
-      refreshInterval,
+      refreshInterval: useSse ? 0 : baseRefreshInterval,
       keepPreviousData: true, // Keep previous data while fetching new data
       revalidateOnFocus: false, // Don't revalidate when window gains focus
       revalidateOnReconnect: true, // Revalidate when reconnecting to network
@@ -50,6 +52,31 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
     }
   )
 
+  // SSE subscription to trigger immediate refreshes (debounced)
+  const sseRef = useRef<{ close: () => void } | null>(null)
+  useEffect(() => {
+    if (!useSse) return
+    let debounceTimer: any = null
+    const trigger = () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        mutate(buildApiUrl())
+      }, 250)
+    }
+    // Subscribe to backend SSE for new items
+    const sub = subscribeNewItems(apiBaseUrl, () => {
+      trigger()
+    })
+    sseRef.current = sub
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer)
+      try { sseRef.current?.close() } catch {}
+      sseRef.current = null
+    }
+    // Intentionally exclude buildApiUrl identity change from deps to avoid resubscribing on every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBaseUrl, useSse])
+
   // Manual refresh function
   const refresh = useCallback(() => {
     mutate(buildApiUrl())
@@ -61,6 +88,6 @@ export function useFeed({ apiBaseUrl, filter, search, limit = 20 }: UseFeedOptio
     isLoading,
     isValidating,
     refresh,
-    refreshInterval
+    refreshInterval: useSse ? 0 : baseRefreshInterval
   }
 }

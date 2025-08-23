@@ -1,5 +1,6 @@
 import { NewsItem, Impact } from '../types';
 import { getDb } from '../lib/firestore';
+import { getBulkWriter, incEnqueued } from '../lib/bulkWriter';
 import { sseHub } from '../realtime/sse';
 import { generateArticleHash } from '../storage';
 import { scoreNews } from '../utils/scoring';
@@ -8,6 +9,7 @@ import { sanitizeText } from '../utils/sanitize';
 import { computeVerification } from '../utils/verification';
 import { isTradingRelevant } from '../utils/tradingFilter';
 import { getConfig } from '../config/env';
+import { probes } from '../ops/probes';
 
 // Environment getter functions
 const getBreakingLogLevel = () => process.env.BREAKING_LOG_LEVEL || 'info';
@@ -130,11 +132,35 @@ export const publishStub = async (item: {
   const startTime = Date.now();
   
   try {
+    // Optional: coerce published_at when upstream lacks it (gated)
+    function coercePublishedAt(it: any): string | null {
+      const tryDates = [it?.published_at, it?.pubDate, it?.isoDate];
+      for (const d of tryDates) {
+        if (d) { const t = new Date(d); if (!Number.isNaN(+t)) return t.toISOString(); }
+      }
+      if (process.env.ALLOW_PUBLISH_AT_FALLBACK === '1') {
+        try { if (it?.first_seen_at) { const t = new Date(it.first_seen_at); if (!Number.isNaN(+t)) return t.toISOString(); } } catch {}
+        return new Date().toISOString();
+      }
+      return null;
+    }
+    if (!('published_at' in item) || !item.published_at) {
+      const coerced = coercePublishedAt(item);
+      if (coerced) (item as any).published_at = coerced;
+    }
     const db = getDb();
     const newsCollection = db.collection('news');
     
-    // Generate ID from title hash for deduplication
-    const id = generateArticleHash(item.title);
+    // Generate canonical ID using normalization pipeline (title + primary entity)
+    const primaryForId = extractPrimaryEntity(item.title);
+    const id = generateArticleHash(item.title, primaryForId);
+    try {
+      if (process.env.FASTLANE_PROBE === '1') {
+        const wall = Date.now(); const mono = Number(process.hrtime.bigint()) / 1e6;
+        try { (require('../ops/probes') as any).recordFetchedAt({ id, source: item.source || null, fetchedAtMs: wall, fetchedAtMonoMs: mono }); } catch { require('../ops/probes').probes.recordFetched(id, item.source || null, new Date(wall).toISOString()); }
+        try { console.log('FETCH_DONE', { id, source: item.source, fetched_at: new Date(wall).toISOString(), url: item.url }); } catch {}
+      }
+    } catch {}
     const arrivalAt = new Date().toISOString();
 
     // Earliest stub gate (trading-only)
@@ -165,7 +191,7 @@ export const publishStub = async (item: {
       why: '',
       tickers: [],
       published_at: item.published_at || arrivalAt,
-      thread_id: generateArticleHash(item.title, undefined), // Simple thread ID
+      thread_id: generateArticleHash(item.title, primaryForId),
       primary_entity: '',
       version: 'v2' // Mark as new version
     };
@@ -180,10 +206,30 @@ export const publishStub = async (item: {
       return { id, success: false, error: 'duplicate' };
     }
     
+    // Persist single-point accept time for publisher→pulse probe (early, high-precision)
+    try {
+      if (process.env.FASTLANE_PROBE === '1') {
+        const monoMs = Number(process.hrtime.bigint()) / 1e6;
+        (item as any).first_seen_ms = (item as any).first_seen_ms ?? Date.now();
+        (item as any).first_seen_ms_mono = (item as any).first_seen_ms_mono ?? monoMs;
+        const { recordFirstSeen } = require('../ops/probes');
+        recordFirstSeen({ id, source: item.source || null, firstSeenMs: (item as any).first_seen_ms });
+        // PM2 log + JSONL fetched_at line
+        try {
+          const nowIso = new Date((item as any).first_seen_ms).toISOString();
+          console.log('FETCH_DONE', { id, source: item.source, fetched_at: nowIso, url: item.url });
+          const { probes } = require('../ops/probes');
+          probes['enqueueWrite']?.(JSON.stringify({ id, source: item.source, fetched_at: nowIso, visible_at: null, delta_ms: null }));
+        } catch {}
+      }
+    } catch {}
+
     // Write stub immediately (stub-first delivery)
-    await docRef.set(stub);
+    const bw = getBulkWriter({ enabled: String(process.env.BULKWRITER_ENABLED || '0') === '1' });
+    if (bw) { try { (bw as any).set(docRef, stub, { merge: false }); incEnqueued(); } catch { await docRef.set(stub); } }
+    else { await docRef.set(stub); }
     // Emit SSE new-item event (guarded inside hub by SSE_ENABLED)
-    try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); } catch {}
+    try { sseHub.broadcastNewItem({ id, ingested_at: arrivalAt }); try { probes.recordEmitted(id, item.source || null, arrivalAt); } catch {} } catch {}
     // Track fetch/new attempt
     incrementStats(item.source, 'fetched');
     

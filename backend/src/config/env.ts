@@ -17,13 +17,14 @@ const loadConfig = () => {
     rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MINUTE || '60', 10),
     
     // Breaking Mode configuration
-    breakingMode: process.env.BREAKING_MODE === '1',
+    breakingMode: (process.env.BREAKING_MODE === '1') || (process.env.BREAKING_SCHEDULER_ENABLED === '1'),
     breakingLogLevel: process.env.BREAKING_LOG_LEVEL || 'info',
     verificationMode: process.env.VERIFICATION_MODE || 'v1',
     impactMode: process.env.IMPACT_MODE || 'v3',
     
-    // Breaking sources and event windows JSON
+    // Breaking sources and event windows JSON / env allowlist
     breakingSourcesJson: process.env.BREAKING_SOURCES_JSON,
+    breakingAllowlistEnv: process.env.BREAKING_ALLOWLIST || '',
     eventWindowsJson: process.env.EVENT_WINDOWS_JSON,
     
     // Source request timeout

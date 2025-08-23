@@ -1,5 +1,8 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
+import { parseStringPromise } from 'xml2js';
+import { getXmlPool } from './xmlWorkerPool';
+import { listValidators, setValidator } from '../lib/httpCache';
 import { NewsItem, Impact } from '../types';
 import { rssFeeds } from '../config/rssFeeds';
 import { addNewsItems, generateArticleHash } from '../storage';
@@ -11,8 +14,12 @@ import { getDb } from '../lib/firestore';
 import { cryptoFeeds } from '../config/cryptoFeeds';
 import { expansionFeeds } from '../config/expansionFeeds';
 import { getConfig } from '../config/env';
+import { probes } from '../ops/probes';
 
 const parseXML = promisify(parseString);
+async function parseXmlLocally(xml: string) {
+  return await parseStringPromise(xml);
+}
 
 // --- Helpers: Date parsing & URL sanitization ---
 const MONTHS = {
@@ -137,6 +144,31 @@ interface AtomFeedDoc { feed?: { entry?: AtomEntry[] } }
 // In-memory transport caches and counters for metrics
 const etags = new Map<string, string>();
 const lastModified = new Map<string, string>();
+const httpCounters: Record<string, { c200: number; c304: number }> = {};
+function bumpCounter(source: string, kind: 200 | 304) {
+  const rec = httpCounters[source] || (httpCounters[source] = { c200: 0, c304: 0 });
+  if (kind === 200) rec.c200++;
+  else rec.c304++;
+}
+
+// Expose counters to metrics-lite
+export function getHttpConditionalCounters(): Record<string, { c200: number; c304: number }> {
+  return { ...httpCounters };
+}
+
+// Seed validators from persistence at boot
+export async function initHttpValidators(): Promise<void> {
+  try {
+    const all = await listValidators();
+    for (const [id, v] of Object.entries(all)) {
+      if (v.etag) etags.set(id.replace(/_/g, ' '), v.etag);
+      if (v.lastModified) lastModified.set(id.replace(/_/g, ' '), v.lastModified);
+    }
+    console.log('[httpCache][rss] seeded', { etags: etags.size, lastModified: lastModified.size });
+  } catch (e) {
+    console.warn('[httpCache][rss] seed failed', (e as any)?.message || e);
+  }
+}
 
 // Helper: merge per-source metrics into system.ingest_status (no schema change)
 async function updatePerSourceIngestStatus(update: {
@@ -323,6 +355,18 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
     category: score.tags?.includes('Macro') ? 'macro' : undefined
   } as any;
 
+  // Probe: record ingest acceptance (stable id, earliest-only semantics, monotonic + wall clock)
+  try {
+    if (process.env.FASTLANE_PROBE === '1') {
+      const wall = Date.now();
+      const mono = Number(process.hrtime.bigint()) / 1e6;
+      try { (require('../ops/probes') as any).recordFetchedAt({ id: newsItem.id, source: sourceName, fetchedAtMs: wall, fetchedAtMonoMs: mono }); } catch {
+        try { const { recordFirstSeen } = require('../ops/probes'); recordFirstSeen({ id: newsItem.id, source: sourceName, firstSeenMs: wall }); } catch {}
+      }
+      try { console.log('FETCH_DONE', { id: newsItem.id, source: sourceName, fetched_at: new Date(wall).toISOString(), url: newsItem.source_url || '' }); } catch {}
+    }
+  } catch {}
+
   // Log latency metrics for RSS as well (publish -> ingest)
   try {
     if (pubDate) {
@@ -427,10 +471,16 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
         const lm = getFn ? getFn('last-modified') : (hdrs?.['last-modified'] ?? hdrs?.lastModified ?? null);
         if (et) etags.set(feed.name, et);
         if (lm) lastModified.set(feed.name, lm);
+        if (et || lm) {
+          // Persist validators (fire-and-forget)
+          void setValidator(feed.name, { etag: et || undefined, lastModified: lm || undefined, updated_at: new Date().toISOString() }).catch(() => {});
+        }
       } catch { /* ignore header parse issues in tests/mocks */ }
     }
 
     if (response.status === 304) {
+      bumpCounter(feed.name, 304);
+      try { probes.recordHttpStatus(new URL(feed.url).host, 304); } catch {}
       await updatePerSourceIngestStatus({
         source: feed.name,
         fetched_at: new Date().toISOString(),
@@ -441,10 +491,14 @@ export const fetchRSSFeed = async (feed: typeof rssFeeds[0]): Promise<NewsItem[]
     }
 
     if (!response.ok) {
+      try { probes.recordHttpStatus(new URL(feed.url).host, Number(response.status) || 0); } catch {}
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const parsed = await parseXML(responseText) as RSSFeed & AtomFeedDoc;
+    bumpCounter(feed.name, 200);
+    // Parse XML using worker pool with fallback to local parse
+    const pool = getXmlPool();
+    const parsed = await pool.parse(responseText, () => parseXmlLocally(responseText)) as RSSFeed & AtomFeedDoc;
     const channel = parsed.rss?.channel?.[0];
     
     // If standard RSS is unavailable, try Atom format (e.g., The Verge)
