@@ -97,6 +97,9 @@ type DemoteInfo = {
 
 class BreakingScheduler {
   private config: BreakingConfig;
+  // Track earliest fetched_at per id to avoid duplicate logs (TTL ~6h)
+  private fetchedLogged: Map<string, number> = new Map();
+  private fetchedTtlMs: number = 6 * 60 * 60 * 1000;
   private eventWindows: EventWindowsConfig;
   private timers: Map<string, NodeJS.Timeout> = new Map();
   private etags: Map<string, string> = new Map();
@@ -542,8 +545,8 @@ class BreakingScheduler {
       // Create AbortController for timeout
       const controller = new AbortController();
       const tier1 = ['Bloomberg Markets','Reuters Business','AP Business','CNBC','Financial Times','PRNewswire','GlobeNewswire','SEC Filings','NASDAQ Trader News','NYSE Notices','Business Wire'];
-      const isTier1 = tier1.includes(source.name) || inBreakingLane;
-      const timeoutMs = isTier1 ? parseInt(process.env.TIER1_HTTP_TIMEOUT_MS || '3000', 10) : 8000;
+      const isTier1Name = tier1.includes(source.name) || inBreakingLane;
+      const timeoutMs = isTier1Name ? parseInt(process.env.TIER1_HTTP_TIMEOUT_MS || '3000', 10) : 8000;
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const ua = process.env[`UA_${source.name.replace(/\W+/g,'_').toUpperCase()}`] || process.env.RSS_UA || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36';

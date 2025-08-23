@@ -305,7 +305,8 @@ router.get('/metrics-lite', async (_req, res) => {
           }
           touched = set.size;
         }
-        (response as any).coverage = { window_min: 10, touched, total, pct: (total ? Math.round((touched/total)*100) : null) };
+        // Note: attach to a temp object; response is declared below
+        var _coverage = { window_min: 10, touched, total, pct: (total ? Math.round((touched/total)*100) : null) } as any;
       } catch {}
     }
 
@@ -328,6 +329,7 @@ router.get('/metrics-lite', async (_req, res) => {
       feed_count: feedCount,
       now: new Date().toISOString(),
       ...(confidenceStateMetrics && { confidence_state: confidenceStateMetrics }),
+      ...(_coverage ? { coverage: _coverage } : {}),
       ...(latency && { latency }),
       ...(globalPublisher && { global_publisher: globalPublisher }),
       ...(globalPulse && { global_pulse: globalPulse }),
@@ -336,6 +338,13 @@ router.get('/metrics-lite', async (_req, res) => {
       sse_broadcast_ms: process.env.SSE_ENABLED === '1' ? sseHub.getStats().broadcast_ms : 0,
       sse_dropped: process.env.SSE_ENABLED === '1' ? sseHub.getStats().dropped : 0
     };
+
+    // Attach probe join counters and single-point delta summary
+    try {
+      const jc = probes.getJoinCounters();
+      const sp = probes.getProbeSummary();
+      (response as any).probe = { join_hit: jc.join_hit, join_miss: jc.join_miss_ingest, cache_size: jc.cache_size, delta_count: sp.delta_count, delta_p50_ms: sp.delta_p50_ms, delta_p90_ms: sp.delta_p90_ms };
+    } catch {}
 
     // Optional: HTTP 429/5xx EWMA counters (guarded)
     if (String(process.env.HTTP_RATE_PROBE || '0') === '1') {

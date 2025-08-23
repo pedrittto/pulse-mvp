@@ -355,6 +355,18 @@ const normalizeRSSItem = async (item: RSSItem, sourceName: string): Promise<News
     category: score.tags?.includes('Macro') ? 'macro' : undefined
   } as any;
 
+  // Probe: record ingest acceptance (stable id, earliest-only semantics, monotonic + wall clock)
+  try {
+    if (process.env.FASTLANE_PROBE === '1') {
+      const wall = Date.now();
+      const mono = Number(process.hrtime.bigint()) / 1e6;
+      try { (require('../ops/probes') as any).recordFetchedAt({ id: newsItem.id, source: sourceName, fetchedAtMs: wall, fetchedAtMonoMs: mono }); } catch {
+        try { const { recordFirstSeen } = require('../ops/probes'); recordFirstSeen({ id: newsItem.id, source: sourceName, firstSeenMs: wall }); } catch {}
+      }
+      try { console.log('FETCH_DONE', { id: newsItem.id, source: sourceName, fetched_at: new Date(wall).toISOString(), url: newsItem.source_url || '' }); } catch {}
+    }
+  } catch {}
+
   // Log latency metrics for RSS as well (publish -> ingest)
   try {
     if (pubDate) {

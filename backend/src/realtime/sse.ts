@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { probes } from '../ops/probes';
+import { probes, recordVisible } from '../ops/probes';
 
 type Client = { id: string; res: Response; ip: string };
 
@@ -107,7 +107,13 @@ class SSEHub {
 		}
 		this.lastBroadcastMs = Date.now() - start;
 		this.recentEvents.push({ seq, data, ts: Date.now() });
-		try { if (process.env.FASTLANE_PROBE === '1') probes.recordEmitted(data.id, data.source || null, data.emitted_at || data.ingested_at); } catch {}
+		try {
+			if (process.env.FASTLANE_PROBE === '1') {
+				const now = Date.now();
+				const nowMono = Number(process.hrtime.bigint()) / 1e6;
+				try { (require('../ops/probes') as any).recordVisibleAt({ id: data.id, source: data.source || null, visibleAtMs: now, visibleAtMonoMs: nowMono }); } catch { recordVisible({ id: data.id, source: data.source || null, visibleAtMs: now }); }
+			}
+		} catch {}
 		if (this.recentEvents.length > this.recentCapacity) this.recentEvents.shift();
 		this.eventsTotal++;
 		// Minimal observability (info-level)
