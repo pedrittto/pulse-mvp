@@ -7,8 +7,14 @@ import { rssFeeds } from '../config/rssFeeds.js';
 import { expansionFeeds } from '../config/expansionFeeds.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { probes } from '../ops/probes.js';
 import { isOriginDomain } from './originsRegistry.js';
+import { setReady as setSchedulerReady } from '../ops/ready.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const parseXML = promisify(parseString);
 
@@ -197,7 +203,6 @@ class BreakingScheduler {
   private getSplayFor(sourceName: string): number {
     if (!this.splayMs.has(sourceName)) {
       try {
-        const crypto = require('crypto');
         const h: Buffer = crypto.createHash('sha1').update(String(sourceName)).digest();
         const n = h.readUInt16BE(0) % (this.splayMaxMs + 1);
         this.splayMs.set(sourceName, n);
@@ -572,7 +577,7 @@ class BreakingScheduler {
         if (et) this.etags.set(source.name, et);
         if (lm) this.lastModified.set(source.name, lm);
         if (et || lm) await this.persistSourceState(source.name, { etag: et || undefined as any, lastModified: lm || undefined as any });
-        try { const { recordHttpDateSkew } = require('../ops/driftMonitor'); const host = new URL(source.url).host; recordHttpDateSkew(host, dateHdr || null); } catch {}
+        try { const host = new URL(source.url).host; recordHttpDateSkew(host, dateHdr || null); } catch {}
       } catch { /* ignore header parse issues in tests/mocks */ }
 
       // Reset backoff on success
@@ -1111,7 +1116,7 @@ class BreakingScheduler {
   // --- Persistence ---
   private async persistSourceState(sourceName: string, patch: Partial<{ etag: string; lastModified: string; backoff: BackoffState; nextPoll: number }>): Promise<void> {
     try {
-      const db = require('../lib/firestore').getDb();
+      const db = getDb();
       const ref = db.collection('ingest_state').doc(sourceName);
       await ref.set({
         ...(patch.etag ? { etag: patch.etag } : {}),
@@ -1125,7 +1130,7 @@ class BreakingScheduler {
 
   private async restorePersistedState(): Promise<void> {
     try {
-      const db = require('../lib/firestore').getDb();
+      const db = getDb();
       const col = await db.collection('ingest_state').get();
       if (col && Array.isArray(col.docs)) {
         for (const doc of col.docs) {
@@ -1153,7 +1158,7 @@ class BreakingScheduler {
   // Leader lock
   private async tryAcquireLock(): Promise<boolean> {
     try {
-      const db = require('../lib/firestore').getDb();
+      const db = getDb();
       const ref = db.collection('admin').doc('scheduler_lock');
       const now = Date.now();
       const leaseMs = 30000;
@@ -1173,7 +1178,7 @@ class BreakingScheduler {
   private async renewLock(): Promise<void> {
     if (!this.hasLock) return;
     try {
-      const db = require('../lib/firestore').getDb();
+      const db = getDb();
       const ref = db.collection('admin').doc('scheduler_lock');
       const now = Date.now();
       const leaseMs = 30000;
