@@ -23,8 +23,18 @@ import { startPollController } from './ingest/pollController.js';
 import { getReady, isReady, setReady } from './ops/ready.js';
 import { getDb } from './lib/firestore.js';
 
+// Early crash guards and boot log
+process.on('unhandledRejection', (err: any) => {
+  try { console.error('[boot][unhandledRejection]', (err as any)?.stack || err); } catch {}
+});
+process.on('uncaughtException', (err: any) => {
+  try { console.error('[boot][uncaughtException]', (err as any)?.stack || err); } catch {}
+});
+try { console.log('[boot] starting process pid=%d node=%s', process.pid, process.version); } catch {}
+
 const app = express();
 const port = getConfig().port;
+const DISABLE_JOBS = (process.env.DISABLE_JOBS === '1' || process.env.START_JOBS === '0');
 
 // Export app for testing (without starting the server)
 export { app };
@@ -172,45 +182,50 @@ if (isMain()) {
 
   const host = '0.0.0.0';
   const server = app.listen(port, host, () => {
-    console.log(`[boot][listen] host=${host} port=${port} env=${process.env.NODE_ENV || ''} pid=${process.pid}`);
+    try { console.log('[boot][listen] host=%s port=%d DISABLE_JOBS=%s', host, port, String(DISABLE_JOBS)); } catch {}
     console.log('[flags]', {
       adaptive_default: true,
       transport_v2: process.env.RSS_TRANSPORT_V2 !== '0',
       sse: process.env.SSE_ENABLED === '1'
     });
-    
-    // Log admin diagnostics
-    logAdminDiagnostics();
-    
-    // Seed HTTP validators from persistence before starting ingestion
-    (async () => { try { await initHttpValidators(); await runWarmupIfEnabled(); } catch {} })();
-    // Start RSS ingestion cron job
-    startRSSIngestion();
-    // Start control synthetic feed for dev/CI only
-    startControlFeed();
-    if (process.env.SOURCE_SET === 'crypto_v1') {
-      console.log('[server] SOURCE_SET=crypto_v1 enabled. AUDIT_MODE=%s', process.env.AUDIT_MODE === '1' ? 'ON' : 'OFF');
-    }
-    
-    // Start breaking news scheduler (unless explicitly disabled)
-    const DISABLE_INGEST = process.env.DISABLE_INGEST === '1';
-    console.log('[boot] flags', {
-      FASTLANE_ENABLED: process.env.FASTLANE_ENABLED,
-      RSS_TRANSPORT_V2: process.env.RSS_TRANSPORT_V2,
-      USE_FAKE_FIRESTORE: process.env.USE_FAKE_FIRESTORE,
-      WARMUP_TIER1: process.env.WARMUP_TIER1
-    });
-    if (!DISABLE_INGEST) {
-      console.log('[boot] starting breaking scheduler…');
-      breakingScheduler.start();
-      console.log('[boot] breaking scheduler started. sources=', (breakingScheduler as any).getStatus?.().sources?.length ?? 'n/a');
+    if (!DISABLE_JOBS) {
+      try {
+        // Log admin diagnostics
+        logAdminDiagnostics();
+        // Seed HTTP validators & optional warmup
+        (async () => { try { await initHttpValidators(); await runWarmupIfEnabled(); } catch {} })();
+        // Start RSS ingestion cron job
+        startRSSIngestion();
+        // Start control synthetic feed for dev/CI only
+        startControlFeed();
+        if (process.env.SOURCE_SET === 'crypto_v1') {
+          console.log('[server] SOURCE_SET=crypto_v1 enabled. AUDIT_MODE=%s', process.env.AUDIT_MODE === '1' ? 'ON' : 'OFF');
+        }
+        // Start breaking news scheduler (unless explicitly disabled)
+        const DISABLE_INGEST = process.env.DISABLE_INGEST === '1';
+        console.log('[boot] flags', {
+          FASTLANE_ENABLED: process.env.FASTLANE_ENABLED,
+          RSS_TRANSPORT_V2: process.env.RSS_TRANSPORT_V2,
+          USE_FAKE_FIRESTORE: process.env.USE_FAKE_FIRESTORE,
+          WARMUP_TIER1: process.env.WARMUP_TIER1
+        });
+        if (!DISABLE_INGEST) {
+          console.log('[boot] starting breaking scheduler…');
+          breakingScheduler.start();
+          console.log('[boot] breaking scheduler started. sources=', (breakingScheduler as any).getStatus?.().sources?.length ?? 'n/a');
+        } else {
+          console.log('[boot] DISABLE_INGEST=1 → scheduler not started');
+        }
+      } catch (e) {
+        console.error('[boot][jobs] startup error', (e as any)?.stack || e);
+      }
     } else {
-      console.log('[boot] DISABLE_INGEST=1 → scheduler not started');
+      console.log('[boot][jobs] disabled by env');
     }
     // Internal readiness probe to /health
     const readyTimeout = setTimeout(() => {
       console.error('[boot][ready][fail] timeout waiting for /health');
-      process.exit(1);
+      // do not exit; keep serving /health
     }, 3000);
     (async () => {
       try {
@@ -289,7 +304,6 @@ if (isMain()) {
       } catch (e: any) {
         console.error('[boot][ready][fail] error=' + (e?.message || String(e)));
         clearTimeout(readyTimeout);
-        process.exit(1);
       }
     })();
   });
