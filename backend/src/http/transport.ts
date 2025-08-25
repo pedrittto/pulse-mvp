@@ -1,5 +1,4 @@
 import { setGlobalDispatcher, Agent } from 'undici';
-import CacheableLookup from 'cacheable-lookup';
 import dns from 'node:dns';
 
 try {
@@ -10,11 +9,7 @@ try {
 // Flag: HTTP/2 enablement (ALPN). Default OFF. Safe fallback to HTTP/1.1.
 const HTTP2_ENABLED = String(process.env.HTTP2_ENABLED || '0') === '1';
 
-const cacheable = new CacheableLookup({
-	maxTtl: Math.max(1, Math.floor((parseInt(process.env.DNS_CACHE_TTL_MS || '60000', 10)) / 1000)),
-	errorTtl: 5,
-	fallbackDuration: 3600
-});
+// DNS cache removed for compatibility; rely on Node resolver
 
 // Global Undici agent with keep-alive enabled and conservative per-origin connections
 // Note: Undici Agent provides HTTP/1.1. If HTTP2_ENABLED is set, ALPN is attempted by
@@ -27,7 +22,7 @@ const agent = new Agent({
 	keepAliveMaxTimeout: 60_000,
 	pipelining: 1,
 	connections: 8,
-	connect: { lookup: cacheable.lookup as any }
+	// no custom lookup
 });
 
 setGlobalDispatcher(agent);
