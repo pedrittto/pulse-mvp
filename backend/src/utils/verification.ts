@@ -1,4 +1,4 @@
-import { getSourceTier } from './sourceTiers';
+import { getSourceTier } from './sourceTiers.js';
 
 /**
  * Verification System V1 - Deterministic 4-State Verification Status

@@ -1,11 +1,11 @@
-import { NewsItem } from './types';
-import { getDb } from './lib/firestore';
-import { sanitizeText } from './utils/sanitize';
-import { scoreNews } from './utils/scoring';
-import { composeHeadline, composeSummary } from './utils/factComposer';
-import { isTradingRelevant } from './utils/tradingFilter';
-import { sseHub } from './realtime/sse';
-import { getBulkWriter, incEnqueued } from './lib/bulkWriter';
+import { NewsItem } from './types.js';
+import { getDb } from './lib/firestore.js';
+import { sanitizeText } from './utils/sanitize.js';
+import { scoreNews } from './utils/scoring.js';
+import { composeHeadline, composeSummary } from './utils/factComposer.js';
+import { isTradingRelevant } from './utils/tradingFilter.js';
+import { sseHub } from './realtime/sse.js';
+import { getBulkWriter, incEnqueued } from './lib/bulkWriter.js';
 
 // Sanitize payload to remove undefined/null values (except where Firestore Timestamp is expected)
 const sanitizePayload = (payload: any): any => {

@@ -1,14 +1,15 @@
-import { getReady } from './ready';
-import { sseHub } from '../realtime/sse';
-import { breakingScheduler } from '../ingest/breakingScheduler';
-import { getHttpConditionalCounters } from '../ingest/rss';
-import { getBulkWriterCounters } from '../lib/bulkWriter';
-import { getSocialCounters } from '../social/scheduler';
-import { getRenderAgg } from '../realtime/renderAgg';
-import { getOpsSnapshot } from './runtimeMonitor';
-import { getDb } from '../lib/firestore';
-import { getDriftSnapshot } from './driftMonitor';
-import { getHostForSource } from '../config/rssFeeds';
+import { getReady } from './ready.js';
+import { sseHub } from '../realtime/sse.js';
+import { breakingScheduler } from '../ingest/breakingScheduler.js';
+import { getHttpConditionalCounters } from '../ingest/rss.js';
+import { getBulkWriterCounters } from '../lib/bulkWriter.js';
+import { getSocialCounters } from '../social/scheduler.js';
+import { getRenderAgg } from '../realtime/renderAgg.js';
+import { getOpsSnapshot } from './runtimeMonitor.js';
+import { getDb } from '../lib/firestore.js';
+import { getDriftSnapshot } from './driftMonitor.js';
+import { getHostForSource } from '../config/rssFeeds.js';
+import { getWebhookCounters } from '../ingest/webhookQueue.js';
 
 function h(line: string) { return line + '\n'; }
 function escLabel(v: string) { return String(v).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
@@ -49,7 +50,7 @@ async function computePublisherLatencies(windowMin: number): Promise<{ bySource:
     if (driftEnabled) {
       try {
         const host = getHostForSource(name);
-        const skew = host && drift?.by_host?.[host]?.p50_ms ? (drift!.by_host as any)[host].p50_ms as number : 0;
+        const skew = host && (drift as any)?.by_host?.[host]?.p50_ms ? (drift as any).by_host[host].p50_ms as number : 0;
         const corr = arr.map(v => Math.max(0, v - (skew||0)));
         if (p50 != null && p50 <= threshold) corrEligible.push(...corr);
       } catch {}
@@ -107,7 +108,7 @@ export async function renderPromMetrics(): Promise<string> {
   text += h('# HELP webhook_emitted_total Stubs emitted from webhooks per provider');
   text += h('# TYPE webhook_emitted_total counter');
   try {
-    const wc = require('../ingest/webhookQueue').getWebhookCounters();
+    const wc = getWebhookCounters();
     Object.entries(wc).forEach(([prov, rec]: any) => {
       text += h(`webhook_received_total{provider="${escLabel(prov)}"} ${(rec.received)||0}`);
       text += h(`webhook_emitted_total{provider="${escLabel(prov)}"} ${(rec.emitted)||0}`);

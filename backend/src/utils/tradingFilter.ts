@@ -1,4 +1,4 @@
-import { getSourceTier } from './sourceTiers';
+import { getSourceTier } from './sourceTiers.js';
 
 export type TradingFilterReason =
   | 'allow_markets_macro'

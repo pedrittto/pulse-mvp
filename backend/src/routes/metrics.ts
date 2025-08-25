@@ -1,15 +1,15 @@
 import express from 'express';
-import { getDb } from '../lib/firestore';
-import { sseHub } from '../realtime/sse';
-import { getHttpConditionalCounters } from '../ingest/rss';
-import { breakingScheduler } from '../ingest/breakingScheduler';
-import { getRenderAgg } from '../realtime/renderAgg';
-import { getOpsSnapshot } from '../ops/runtimeMonitor';
-import { getDriftSnapshot } from '../ops/driftMonitor';
-import { getSocialCounters } from '../social/scheduler';
-import { getWebhookCounters } from '../ingest/webhookQueue';
-import { getBulkWriterCounters } from '../lib/bulkWriter';
-import { probes } from '../ops/probes';
+import { getDb } from '../lib/firestore.js';
+import { sseHub } from '../realtime/sse.js';
+import { getHttpConditionalCounters } from '../ingest/rss.js';
+import { breakingScheduler } from '../ingest/breakingScheduler.js';
+import { getRenderAgg } from '../realtime/renderAgg.js';
+import { getOpsSnapshot } from '../ops/runtimeMonitor.js';
+import { getDriftSnapshot } from '../ops/driftMonitor.js';
+import { getSocialCounters } from '../social/scheduler.js';
+import { getWebhookCounters } from '../ingest/webhookQueue.js';
+import { getBulkWriterCounters } from '../lib/bulkWriter.js';
+import { probes } from '../ops/probes.js';
 
 const router = express.Router();
 

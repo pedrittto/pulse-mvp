@@ -1,5 +1,5 @@
 // Phase 1 canary watchers: read-only listings with ETag/Last-Modified. No schema/API changes.
-import { getDb } from '../lib/firestore';
+import { getDb } from '../lib/firestore.js';
 
 type WatcherConfig = {
   name: string;

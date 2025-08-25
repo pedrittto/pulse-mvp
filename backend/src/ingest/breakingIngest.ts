@@ -1,15 +1,15 @@
-import { NewsItem, Impact } from '../types';
-import { getDb } from '../lib/firestore';
-import { getBulkWriter, incEnqueued } from '../lib/bulkWriter';
-import { sseHub } from '../realtime/sse';
-import { generateArticleHash } from '../storage';
-import { scoreNews } from '../utils/scoring';
-import { composeHeadline, composeSummary } from '../utils/factComposer';
-import { sanitizeText } from '../utils/sanitize';
-import { computeVerification } from '../utils/verification';
-import { isTradingRelevant } from '../utils/tradingFilter';
-import { getConfig } from '../config/env';
-import { probes } from '../ops/probes';
+import { NewsItem, Impact } from '../types.js';
+import { getDb } from '../lib/firestore.js';
+import { getBulkWriter, incEnqueued } from '../lib/bulkWriter.js';
+import { sseHub } from '../realtime/sse.js';
+import { generateArticleHash } from '../storage.js';
+import { scoreNews } from '../utils/scoring.js';
+import { composeHeadline, composeSummary } from '../utils/factComposer.js';
+import { sanitizeText } from '../utils/sanitize.js';
+import { computeVerification } from '../utils/verification.js';
+import { isTradingRelevant } from '../utils/tradingFilter.js';
+import { getConfig } from '../config/env.js';
+import { probes } from '../ops/probes.js';
 
 // Environment getter functions
 const getBreakingLogLevel = () => process.env.BREAKING_LOG_LEVEL || 'info';

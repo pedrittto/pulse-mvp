@@ -1,4 +1,4 @@
-import type { SocialPost } from './provider';
+import type { SocialPost } from './provider.js';
 
 export type WatchEntry = { id: string; type: 'ticker'|'keyword'; terms: string[]; enabled: boolean };
 

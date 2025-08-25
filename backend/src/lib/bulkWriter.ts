@@ -1,4 +1,4 @@
-import { getDb } from './firestore';
+import { getDb } from './firestore.js';
 import type { Firestore, BulkWriter, BulkWriterError } from '@google-cloud/firestore';
 
 export type BulkWriterConfig = {

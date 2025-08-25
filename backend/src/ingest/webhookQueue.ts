@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { getDb } from '../lib/firestore';
-import { getAdapter } from './webhookRegistry';
-import { publishStub } from '../ingest/breakingIngest';
+import { getDb } from '../lib/firestore.js';
+import { getAdapter } from './webhookRegistry.js';
+import { publishStub } from '../ingest/breakingIngest.js';
 
 type Job = { provider: string; headers: Record<string,string>; body: string };
 type ProviderCounters = { received: number; verified: number; enqueued: number; parsed_ok: number; emitted: number; idempotent_hits: number; errors: number; cb_active: boolean };

@@ -1,8 +1,8 @@
 import cron from 'node-cron';
-import { ingestRSSFeeds } from './ingest/rss';
-import { breakingScheduler } from './ingest/breakingScheduler';
-import { getConfig } from './config/env';
-import { runFastlaneWatchersOnce } from './ingest/rssWatchers';
+import { ingestRSSFeeds } from './ingest/rss.js';
+import { breakingScheduler } from './ingest/breakingScheduler.js';
+import { getConfig } from './config/env.js';
+import { runFastlaneWatchersOnce } from './ingest/rssWatchers.js';
 
 // Store cron task reference for cleanup
 let rssCronTask: cron.ScheduledTask | null = null;
