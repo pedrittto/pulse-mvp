@@ -32,6 +32,15 @@ class SSEHub {
 		}
 
 		// Required headers
+		// Apply CORS for SSE
+		try {
+			const ALLOWED_ORIGIN = process.env.CORS_ORIGIN ?? 'https://www.pulsenewsai.com';
+			const origin = (req.headers['origin'] as string | undefined) || '';
+			if (!origin || ALLOWED_ORIGIN === '*' || origin === ALLOWED_ORIGIN) {
+				res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN === '*' ? '*' : ALLOWED_ORIGIN);
+				res.setHeader('Vary', 'Origin');
+			}
+		} catch {}
 		res.setHeader('Content-Type', 'text/event-stream');
 		res.setHeader('Cache-Control', 'no-cache, no-transform');
 		res.setHeader('Connection', 'keep-alive');
