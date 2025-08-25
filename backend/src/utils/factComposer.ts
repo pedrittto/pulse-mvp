@@ -3,7 +3,7 @@
  * Ultra-fast, rule-based transforms for headlines and summaries
  */
 
-import { extractKeyFact } from '../pipeline/keyFacts';
+import { extractKeyFact } from '../pipeline/keyFacts.js';
 
 interface RawContent {
   title?: string;

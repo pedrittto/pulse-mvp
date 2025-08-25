@@ -1,6 +1,6 @@
-import { getValidator, setValidator } from '../lib/httpCache';
-import { recordHttpDateSkew } from '../ops/driftMonitor';
-import { rssFeeds } from '../config/rssFeeds';
+import { getValidator, setValidator } from '../lib/httpCache.js';
+import { recordHttpDateSkew } from '../ops/driftMonitor.js';
+import { rssFeeds } from '../config/rssFeeds.js';
 
 type WarmupResult = { source: string; status: 200 | 304 | 'timeout' | 'error'; etag?: string; lastModified?: string; duration_ms: number; host: string; error?: string };
 export type WarmupSummary = { ran: boolean; started_at: string; finished_at: string; results: WarmupResult[] } | { ran: false };

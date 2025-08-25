@@ -1,4 +1,4 @@
-import { getDb } from './firestore';
+import { getDb } from './firestore.js';
 
 export type Validator = { etag?: string; lastModified?: string; updated_at: string };
 

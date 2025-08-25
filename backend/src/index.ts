@@ -1,27 +1,27 @@
-import './http/transport';
+import './http/transport.js';
 import 'dotenv/config';
 
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import { getConfig } from './config/env';
-import apiRoutes from './api';
-import { startRSSIngestion, stopRSSIngestion } from './cron';
-import { breakingScheduler } from './ingest/breakingScheduler';
-import { getCurrentSourceStats, cleanupBreakingIngest } from './ingest/breakingIngest';
-import { logAdminDiagnostics } from './middleware/admin';
-import { sseHub } from './realtime/sse';
-import { startControlFeed, stopControlFeed } from './dev/controlFeed';
-import { initHttpValidators } from './ingest/rss';
-import { runWarmupIfEnabled } from './bootstrap/warmup';
-import { flushAndClose as flushBulkWriter } from './lib/bulkWriter';
-import { startWatchdog, getWatchdogState } from './watchdog/sloWatchdog';
-import { startRuntimeMonitor, getOpsSnapshot } from './ops/runtimeMonitor';
-import { startSocialLane } from './social/scheduler';
-import { startPollController } from './ingest/pollController';
-import { getReady, isReady, setReady } from './ops/ready';
-import { getDb } from './lib/firestore';
+import { getConfig } from './config/env.js';
+import apiRoutes from './api.js';
+import { startRSSIngestion, stopRSSIngestion } from './cron.js';
+import { breakingScheduler } from './ingest/breakingScheduler.js';
+import { getCurrentSourceStats, cleanupBreakingIngest } from './ingest/breakingIngest.js';
+import { logAdminDiagnostics } from './middleware/admin.js';
+import { sseHub } from './realtime/sse.js';
+import { startControlFeed, stopControlFeed } from './dev/controlFeed.js';
+import { initHttpValidators } from './ingest/rss.js';
+import { runWarmupIfEnabled } from './bootstrap/warmup.js';
+import { flushAndClose as flushBulkWriter } from './lib/bulkWriter.js';
+import { startWatchdog, getWatchdogState } from './watchdog/sloWatchdog.js';
+import { startRuntimeMonitor, getOpsSnapshot } from './ops/runtimeMonitor.js';
+import { startSocialLane } from './social/scheduler.js';
+import { startPollController } from './ingest/pollController.js';
+import { getReady, isReady, setReady } from './ops/ready.js';
+import { getDb } from './lib/firestore.js';
 
 const app = express();
 const port = getConfig().port;
@@ -154,7 +154,8 @@ app.use('*', (_req, res) => {
 });
 
 // Start server only if this is the main module (not when imported for testing)
-if (require.main === module) {
+import { isMain } from './shims/esm-compat.js';
+if (isMain()) {
   // Allow forcing SSE on in non-production via an env override for verification
   if (process.env.FORCE_SSE === '1') {
     process.env.SSE_ENABLED = '1';

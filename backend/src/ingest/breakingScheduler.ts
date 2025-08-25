@@ -1,14 +1,14 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
-import { publishStub, enrichItem } from './breakingIngest';
-import { recordHttpDateSkew } from '../ops/driftMonitor';
-import { getDb } from '../lib/firestore';
-import { rssFeeds } from '../config/rssFeeds';
-import { expansionFeeds } from '../config/expansionFeeds';
+import { publishStub, enrichItem } from './breakingIngest.js';
+import { recordHttpDateSkew } from '../ops/driftMonitor.js';
+import { getDb } from '../lib/firestore.js';
+import { rssFeeds } from '../config/rssFeeds.js';
+import { expansionFeeds } from '../config/expansionFeeds.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { probes } from '../ops/probes';
-import { isOriginDomain } from './originsRegistry';
+import { probes } from '../ops/probes.js';
+import { isOriginDomain } from './originsRegistry.js';
 
 const parseXML = promisify(parseString);
 

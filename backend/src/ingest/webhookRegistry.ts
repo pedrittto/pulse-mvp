@@ -1,7 +1,7 @@
-import type { WebhookAdapter } from './webhookAdapters/types';
-import { prnewswireAdapter } from './webhookAdapters/prnewswireAdapter';
-import { globenewswireAdapter } from './webhookAdapters/globenewswireAdapter';
-import { businesswireAdapter } from './webhookAdapters/businesswireAdapter';
+import type { WebhookAdapter } from './webhookAdapters/types.js';
+import { prnewswireAdapter } from './webhookAdapters/prnewswireAdapter.js';
+import { globenewswireAdapter } from './webhookAdapters/globenewswireAdapter.js';
+import { businesswireAdapter } from './webhookAdapters/businesswireAdapter.js';
 
 const adapters: Record<string, WebhookAdapter> = {
 	prnewswire: prnewswireAdapter,

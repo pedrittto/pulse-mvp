@@ -1,20 +1,20 @@
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { parseStringPromise } from 'xml2js';
-import { getXmlPool } from './xmlWorkerPool';
-import { listValidators, setValidator } from '../lib/httpCache';
-import { NewsItem, Impact } from '../types';
-import { rssFeeds } from '../config/rssFeeds';
-import { addNewsItems, generateArticleHash } from '../storage';
-// import { sanitizeText } from '../utils/sanitize';
-import { scoreNews } from '../utils/scoring';
-import { composeHeadline, composeSummary } from '../utils/factComposer';
-import { isTradingRelevant } from '../utils/tradingFilter';
-import { getDb } from '../lib/firestore';
-import { cryptoFeeds } from '../config/cryptoFeeds';
-import { expansionFeeds } from '../config/expansionFeeds';
-import { getConfig } from '../config/env';
-import { probes } from '../ops/probes';
+import { getXmlPool } from './xmlWorkerPool.js';
+import { listValidators, setValidator } from '../lib/httpCache.js';
+import { NewsItem, Impact } from '../types.js';
+import { rssFeeds } from '../config/rssFeeds.js';
+import { addNewsItems, generateArticleHash } from '../storage.js';
+// import { sanitizeText } from '../utils/sanitize.js';
+import { scoreNews } from '../utils/scoring.js';
+import { composeHeadline, composeSummary } from '../utils/factComposer.js';
+import { isTradingRelevant } from '../utils/tradingFilter.js';
+import { getDb } from '../lib/firestore.js';
+import { cryptoFeeds } from '../config/cryptoFeeds.js';
+import { expansionFeeds } from '../config/expansionFeeds.js';
+import { getConfig } from '../config/env.js';
+import { probes } from '../ops/probes.js';
 
 const parseXML = promisify(parseString);
 async function parseXmlLocally(xml: string) {

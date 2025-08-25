@@ -1,4 +1,4 @@
-import type { SocialProvider, SocialPost } from './provider';
+import type { SocialProvider, SocialPost } from './provider.js';
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 

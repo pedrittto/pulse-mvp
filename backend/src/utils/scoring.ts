@@ -1,6 +1,6 @@
-import { scoreImpactV3, logImpactComparison, ImpactV3Result } from './impactV3';
-import { computeVerification, computeVerificationWithDebug, VerificationInputs, VerificationStatus } from './verification';
-import { computeConfidenceState } from './confidenceState';
+import { scoreImpactV3, logImpactComparison, ImpactV3Result } from './impactV3.js';
+import { computeVerification, computeVerificationWithDebug, VerificationInputs, VerificationStatus } from './verification.js';
+import { computeConfidenceState } from './confidenceState.js';
 
 // Environment getter functions
 const getImpactMode = () => process.env.IMPACT_MODE;

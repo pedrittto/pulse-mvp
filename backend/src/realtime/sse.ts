@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { probes, recordVisible } from '../ops/probes';
+import { probes, recordVisibleAt, recordVisible } from '../ops/probes.js';
 
 type Client = { id: string; res: Response; ip: string };
 
@@ -111,7 +111,7 @@ class SSEHub {
 			if (process.env.FASTLANE_PROBE === '1') {
 				const now = Date.now();
 				const nowMono = Number(process.hrtime.bigint()) / 1e6;
-				try { (require('../ops/probes') as any).recordVisibleAt({ id: data.id, source: data.source || null, visibleAtMs: now, visibleAtMonoMs: nowMono }); } catch { recordVisible({ id: data.id, source: data.source || null, visibleAtMs: now }); }
+				recordVisibleAt({ id: data.id, source: data.source || null, visibleAtMs: now, visibleAtMonoMs: nowMono });
 			}
 		} catch {}
 		if (this.recentEvents.length > this.recentCapacity) this.recentEvents.shift();

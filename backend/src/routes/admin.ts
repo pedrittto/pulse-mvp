@@ -1,8 +1,8 @@
 import express from 'express';
-import { publishStub, enrichItem, getSourceLatencyStats, getCurrentSourceStats, resetSourceStats } from '../ingest/breakingIngest';
-import { breakingScheduler } from '../ingest/breakingScheduler';
-import { getDb } from '../lib/firestore';
-import { requireAdmin, requireAdminPurge } from '../middleware/admin';
+import { publishStub, enrichItem, getSourceLatencyStats, getCurrentSourceStats, resetSourceStats } from '../ingest/breakingIngest.js';
+import { breakingScheduler } from '../ingest/breakingScheduler.js';
+import { getDb } from '../lib/firestore.js';
+import { requireAdmin, requireAdminPurge } from '../middleware/admin.js';
 
 const router = express.Router();
 

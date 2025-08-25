@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node --enable-source-maps dist/index.js",
+    "postinstall": "tsc -p tsconfig.json",
     "latency:oneclick": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/latency-oneclick.ps1",
     "latency:now": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/latency-now.ps1",
     "soak:breaking": "node ./scripts/soak-breaking.js",
@@ -27,8 +28,7 @@
     "probe:sources": "node ./scripts/probe-sources.js",
     "synth:webhook:prn": "node ../tools/synth-publisher/cli.js --mode webhook --provider prnewswire --rps 0.5 --duration-sec 300",
     "synth:rss:file": "node ../tools/synth-publisher/cli.js --mode rss-file --file ../tools/synth-publisher/sample.xml --rps 0.5 --duration-sec 300",
-    "kill:4000": "powershell -NoProfile -Command \"Get-Process -Id (Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue).OwningProcess | Stop-Process -Force\"",
-    "postinstall": "tsc -p tsconfig.json"
+    "kill:4000": "powershell -NoProfile -Command \"Get-Process -Id (Get-NetTCPConnection -LocalPort 4000 -ErrorAction SilentlyContinue).OwningProcess | Stop-Process -Force\""
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -69,6 +69,5 @@
   "license": "MIT",
   "engines": {
     "node": "22.x"
-  },
-  "overrides": {}
+  }
 }

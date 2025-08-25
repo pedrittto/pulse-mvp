@@ -1,8 +1,8 @@
-import { XProvider } from './xProvider';
-import type { SocialProvider, SocialPost } from './provider';
-import { scorePostAgainstWatchlist, WatchEntry } from './matcher';
-import { getDb } from '../lib/firestore';
-import { publishStub } from '../ingest/breakingIngest';
+import { XProvider } from './xProvider.js';
+import type { SocialProvider, SocialPost } from './provider.js';
+import { scorePostAgainstWatchlist, WatchEntry } from './matcher.js';
+import { getDb } from '../lib/firestore.js';
+import { publishStub } from '../ingest/breakingIngest.js';
 
 type Counters = { last_poll_at?: string; posts_seen: number; posts_matched: number; emitted: number; dedup_hits: number };
 const counters: Counters = { posts_seen: 0, posts_matched: 0, emitted: 0, dedup_hits: 0 };

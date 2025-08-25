@@ -1,5 +1,5 @@
 import admin from "firebase-admin";
-import { createMockDb } from './mockFirestore';
+import { createMockDb } from './mockFirestore.js';
 
 let db: any | null = null;
 

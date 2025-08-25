@@ -1,4 +1,4 @@
-import type { WebhookAdapter } from './types';
+import type { WebhookAdapter } from './types.js';
 
 export const prnewswireAdapter: WebhookAdapter = {
 	name: 'prnewswire',
