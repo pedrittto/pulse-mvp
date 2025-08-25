@@ -188,6 +188,7 @@ if (isMain()) {
       transport_v2: process.env.RSS_TRANSPORT_V2 !== '0',
       sse: process.env.SSE_ENABLED === '1'
     });
+    const START_BREAKING = process.env.START_BREAKING !== '0';
     if (!DISABLE_JOBS) {
       try {
         // Log admin diagnostics
@@ -209,12 +210,14 @@ if (isMain()) {
           USE_FAKE_FIRESTORE: process.env.USE_FAKE_FIRESTORE,
           WARMUP_TIER1: process.env.WARMUP_TIER1
         });
-        if (!DISABLE_INGEST) {
+        if (!DISABLE_INGEST && START_BREAKING) {
           console.log('[boot] starting breaking scheduler…');
           breakingScheduler.start();
           console.log('[boot] breaking scheduler started. sources=', (breakingScheduler as any).getStatus?.().sources?.length ?? 'n/a');
-        } else {
+        } else if (DISABLE_INGEST) {
           console.log('[boot] DISABLE_INGEST=1 → scheduler not started');
+        } else {
+          console.log('[boot][breaking] disabled by env');
         }
       } catch (e) {
         console.error('[boot][jobs] startup error', (e as any)?.stack || e);
