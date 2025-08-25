@@ -36,6 +36,23 @@ const app = express();
 const port = getConfig().port;
 const DISABLE_JOBS = (process.env.DISABLE_JOBS === '1' || process.env.START_JOBS === '0');
 
+// Global CORS (pre-route, minimal)
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN ?? 'https://www.pulsenewsai.com';
+app.use((req, res, next) => {
+  try {
+    const origin = (req.headers['origin'] as string | undefined) || '';
+    if (!origin || ALLOWED_ORIGIN === '*' || origin === ALLOWED_ORIGIN) {
+      res.setHeader('Access-Control-Allow-Origin', ALLOWED_ORIGIN === '*' ? '*' : ALLOWED_ORIGIN);
+      res.setHeader('Vary', 'Origin');
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+  } catch {}
+  next();
+});
+
 // Export app for testing (without starting the server)
 export { app };
 
