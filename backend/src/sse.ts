@@ -1,6 +1,14 @@
-import type { Request, Response } from "express";
+﻿import type { Request, Response } from "express";
 
 const clients = new Map<string, Response>();
+let eventsSent = 0;
+export function getSSEStats() {
+  return {
+    enabled: process.env.SSE_ENABLED === "1",
+    connections: clients.size,
+    eventsSent,
+  };
+}
 
 export function registerSSE(app: any) {
   // If disabled, expose a fast 503 on the SSE route
@@ -25,11 +33,11 @@ export function registerSSE(app: any) {
     clients.set(id, res);
 
     // initial event
-    res.write(`event: hello\ndata: {"id":"${id}"}\n\n`);
+    eventsSent++; res.write(`event: hello\ndata: {"id":"${id}"}\n\n`);
 
     // keepalive pings
     const keepalive = setInterval(() => {
-      if (!res.writableEnded) res.write(`event: ping\ndata: ${Date.now()}\n\n`);
+      if (!res.writableEnded) { eventsSent++; res.write(`event: ping\ndata: ${Date.now()}\n\n`); }
     }, 15000);
 
     req.on("close", () => {
@@ -43,5 +51,6 @@ export function registerSSE(app: any) {
     res.json({ enabled: true, connections: clients.size });
   });
 }
+
 
 

@@ -1,6 +1,6 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
-import { registerSSE } from "./sse.js";
+import { registerSSE, getSSEStats } from "./sse.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -31,9 +31,24 @@ console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 app.get("/health", (_req, res) => res.json({ ok: true, env: "blue", ts: Date.now() }));
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
 
+app.get("/metrics-summary", (_req, res) => {
+  const sse = typeof getSSEStats === "function"
+    ? getSSEStats()
+    : { enabled: false, connections: 0, eventsSent: 0 };
+
+  res.json({
+    service: "backend",
+    version: "v2",
+    ts: Date.now(),
+    uptimeSec: Math.round(process.uptime()),
+    sse
+  });
+});
+
 if (!DISABLE_JOBS) console.log("[boot] jobs enabled (shadow/off by default)");
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
 });
+
 
