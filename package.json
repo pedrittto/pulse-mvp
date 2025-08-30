@@ -1,0 +1,12 @@
+{
+  "name": "pulse-mvp",
+  "private": true,
+  "packageManager": "pnpm@9",
+  "workspaces": ["backend", "frontend"],
+  "scripts": {
+    "prep": "pnpm -r install",
+    "dev:be": "pnpm -C backend dev",
+    "dev:fe": "pnpm -C frontend dev",
+    "smoke:be": "pnpm -C backend smoke"
+  }
+}
