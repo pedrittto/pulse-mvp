@@ -1,5 +1,6 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
+import { registerSSE } from "./sse.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -19,6 +20,8 @@ app.use(cors({
   },
   credentials: true
 }));
+
+registerSSE(app);
 
 app.get("/_debug/env", (_req, res) => {
   res.json({ allowed: ALLOWED, raw: process.env.CORS_ORIGIN });
