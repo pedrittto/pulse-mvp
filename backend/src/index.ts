@@ -1,6 +1,6 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
-import { registerSSE, getSSEStats } from "./sse.js";
+import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -30,6 +30,16 @@ app.get("/_debug/env", (_req, res) => {
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 app.get("/health", (_req, res) => res.json({ ok: true, env: "blue", ts: Date.now() }));
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
+
+app.post("/_debug/push", express.json(), (req, res) => {
+  const key = req.get("x-debug-key");
+  const expected = process.env.DEBUG_PUSH_KEY;
+  if (!expected || key !== expected) {
+    return res.status(401).json({ ok: false, reason: "UNAUTHORIZED" });
+  }
+  const sent = broadcastBreaking({ ts: Date.now(), ...req.body });
+  return res.json({ ok: true, sent });
+});
 
 app.get("/metrics-summary", (_req, res) => {
   const sse = typeof getSSEStats === "function"

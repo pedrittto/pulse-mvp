@@ -54,3 +54,17 @@ export function registerSSE(app: any) {
 
 
 
+// broadcast to all connected SSE clients
+export function broadcastBreaking(data: any) {
+  let delivered = 0;
+  const payload = `event: breaking\ndata: ${JSON.stringify(data)}\n\n`;
+  for (const res of clients.values()) {
+    if (!res.writableEnded) {
+      res.write(payload);
+      eventsSent++;
+      delivered++;
+    }
+  }
+  return delivered;
+}
+
