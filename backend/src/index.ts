@@ -41,24 +41,14 @@ app.post("/_debug/push", express.json(), (req, res) => {
   return res.json({ ok: true, sent });
 });
 
-app.get("/metrics-summary", (_req, res) => {
-  const sse = typeof getSSEStats === "function"
-    ? getSSEStats()
-    : { enabled: false, connections: 0, eventsSent: 0 };
-
-  res.json({
-    service: "backend",
-    version: "v2",
-    ts: Date.now(),
-    uptimeSec: Math.round(process.uptime()),
-    sse
-  });
+app.get('/metrics-summary', (_req, res) => {
+  const sse = getSSEStats()
+  const by_source = {} as Record<string, unknown>
+  res.json({ sse, by_source })
 });
-
-if (!DISABLE_JOBS) console.log("[boot] jobs enabled (shadow/off by default)");
-
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
 });
+
 
 
