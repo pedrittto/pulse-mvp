@@ -1,6 +1,20 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+
+// Safe fallback: keep v2 shape even if metrics module is missing
+let getLatencySummary: () => Record<string, unknown> = () => ({} as Record<string, unknown>);
+try {
+  // Will resolve to dist/metrics/latency.js at runtime after build
+  const mod = require("./metrics/latency.js");
+  if (mod && typeof mod.getLatencySummary === "function") {
+    getLatencySummary = mod.getLatencySummary as () => Record<string, unknown>;
+  }
+} catch {
+  // keep fallback
+}
 
 const app = express();
 const PORT = Number(process.env.PORT || 4000);
@@ -43,7 +57,7 @@ app.post("/_debug/push", express.json(), (req, res) => {
 
 app.get('/metrics-summary', (_req, res) => {
   const sse = getSSEStats()
-  const by_source = {} as Record<string, unknown>
+  const by_source = getLatencySummary()
   res.json({ sse, by_source })
 });
 app.listen(PORT, "0.0.0.0", () => {
