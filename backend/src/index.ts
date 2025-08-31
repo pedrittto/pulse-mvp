@@ -10,10 +10,13 @@ try {
   // Will resolve to dist/metrics/latency.js at runtime after build
   const mod = require("./metrics/latency.js");
   if (mod && typeof mod.getLatencySummary === "function") {
+    console.log('[metrics] using REAL latency summary');
     getLatencySummary = mod.getLatencySummary as () => Record<string, unknown>;
+  } else {
+    console.log('[metrics] latency module missing export; using FALLBACK');
   }
-} catch {
-  // keep fallback
+} catch (e) {
+  console.log('[metrics] using FALLBACK latency summary:', (e as Error).message);
 }
 
 const app = express();
