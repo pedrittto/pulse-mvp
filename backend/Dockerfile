@@ -9,7 +9,10 @@ RUN pnpm install --frozen-lockfile || pnpm install
 # sources
 COPY . .
 # build TS -> dist/
-RUN pnpm run build
+RUN pnpm run build \
+ && mkdir -p dist/metrics dist/ingest \
+ && (cp -r src/metrics/*.js dist/metrics/ 2>/dev/null || true) \
+ && (cp -r src/ingest/*     dist/ingest/  2>/dev/null || true)
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
@@ -23,3 +26,4 @@ RUN pnpm install --prod --frozen-lockfile || pnpm install --prod
 COPY --from=build /app/dist ./dist
 EXPOSE 8080
 CMD ["node","dist/index.js"]
+
