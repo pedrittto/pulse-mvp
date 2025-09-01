@@ -4,6 +4,7 @@ import { startPRNewswireIngest } from "./prnewswire.js";
 import { startNasdaqHaltsIngest } from "./nasdaq_halts.js";
 import { startNyseNoticesIngest } from "./nyse_notices.js";
 import { startCmeNoticesIngest } from "./cme_notices.js";
+import { startSecPressIngest } from "./sec_press.js";
 
 const REGISTRY: Record<string, () => void> = {
   businesswire: startBusinessWireIngest,
@@ -11,6 +12,7 @@ const REGISTRY: Record<string, () => void> = {
   nasdaq_halts: startNasdaqHaltsIngest,
   nyse_notices: startNyseNoticesIngest,
   cme_notices: startCmeNoticesIngest,
+  sec_press: startSecPressIngest,
 };
 
 function parseEnabled(env?: string | null): string[] {
