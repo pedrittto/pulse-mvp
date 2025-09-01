@@ -14,11 +14,6 @@ function parseEnabled(env?: string | null): string[] {
   return env.split(",").map(s => s.trim()).filter(Boolean);
 }
 
-/**
- * Start all enabled ingests. Controlled by optional env INGEST_SOURCES, e.g.:
- *   INGEST_SOURCES=businesswire,prnewswire
- * Not required to set now; defaults to "businesswire".
- */
 export function startIngests(): void {
   const enabled = parseEnabled(process.env.INGEST_SOURCES);
   for (const key of enabled) {

@@ -57,7 +57,6 @@ type HaltRecord = {
 };
 
 function parseCSV(text: string): HaltRecord[] {
-  // minimal CSV parser: handles quoted fields with commas and simple newlines
   const lines = text.split(/\r?\n/).filter(Boolean);
   if (!lines.length) return [];
   const header = splitCsvLine(lines[0]).map(h => h.trim().toLowerCase());
@@ -115,7 +114,6 @@ function parseJSON(json: any): HaltRecord[] {
 }
 
 function parseHTML(text: string): HaltRecord[] {
-  // very small parser: look for table rows <tr>...</tr> and pick columns
   if (!text) return [];
   const rows = text.split(/<tr[\s\S]*?>/i).slice(1).map(r => r.split(/<\/tr>/i)[0]);
   const out: HaltRecord[] = [];
