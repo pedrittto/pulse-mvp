@@ -63,6 +63,15 @@ app.get('/metrics-summary', (_req, res) => {
   const by_source = getLatencySummary()
   res.json({ sse, by_source })
 });
+// Start ingests unless disabled
+try {
+  if (process.env.DISABLE_JOBS !== "1") {
+    const mod = require("./ingest/index.js");
+    if (mod && typeof mod.startIngests === "function") {
+      mod.startIngests();
+    }
+  }
+} catch {}
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
 });
