@@ -29,6 +29,10 @@ const ALLOWED = (process.env.CORS_ORIGIN ?? "")
   .map(s => s.trim())
   .filter(Boolean);
 
+// Fast-path health probes before any other middleware
+app.get('/health', (_req, res) => res.status(200).type('text/plain').send('ok'));
+app.head('/health', (_req, res) => res.status(200).end());
+
 app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
@@ -45,7 +49,6 @@ app.get("/_debug/env", (_req, res) => {
 });
 
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
-app.get("/health", (_req, res) => res.json({ ok: true, env: "blue", ts: Date.now() }));
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
 
 app.post("/_debug/push", express.json(), (req, res) => {
@@ -58,11 +61,93 @@ app.post("/_debug/push", express.json(), (req, res) => {
   return res.json({ ok: true, sent });
 });
 
+// Metrics summary snapshot (cached)
+const REFRESH_TIMEOUT_MS   = Number(process.env.REFRESH_TIMEOUT_MS || 2000);
+const SNAPSHOT_INTERVAL_MS = Number(process.env.METRICS_SNAPSHOT_INTERVAL_MS || 15_000);
+const SNAPSHOT_MAX_AGE_MS  = Number(process.env.METRICS_SNAPSHOT_MAX_AGE_MS  || 5 * 60_000);
+const METRICS_WINDOW_HOURS = Number(process.env.METRICS_WINDOW_HOURS || 24);
+
+type PerSource = { samples: number; p50_ms: number|null; p90_ms: number|null; last_sample_at: number; };
+let metricsSnapshot: { generatedAt: number; stale: boolean; sse: { p50_ms: number|null; p90_ms: number|null }; by_source: Record<string, any> } = {
+  generatedAt: 0,
+  stale: true,
+  sse: { p50_ms: null, p90_ms: null },
+  by_source: {}
+};
+let metricsSnapshotString = JSON.stringify({ ...metricsSnapshot, stale: true });
+
+function computeSnapshot() {
+  // Use existing latency provider; transform to desired diagnostics-rich shape
+  const raw = getLatencySummary() as Record<string, PerSource>;
+  const by_source: Record<string, any> = {};
+  let totalSamples = 0;
+  let wP50 = 0;
+  let wP90 = 0;
+  for (const [src, v] of Object.entries(raw)) {
+    const samples = v?.samples ?? 0;
+    const p50_ms = v?.p50_ms ?? null;
+    const p90_ms = v?.p90_ms ?? null;
+    const last = (v as any)?.last_sample_at ?? 0;
+    by_source[src] = {
+      samples,
+      p50_ms,
+      p90_ms,
+      last_sample_at: last || null,
+      units: "ms",
+      window_hours: METRICS_WINDOW_HOURS,
+      ...(samples < 5 ? { low_sample: true } : {})
+    };
+    if (samples && typeof p50_ms === 'number') { wP50 += p50_ms * samples; totalSamples += samples; }
+    if (samples && typeof p90_ms === 'number') { wP90 += p90_ms * samples; }
+  }
+  const sse = {
+    p50_ms: totalSamples ? Math.round(wP50 / totalSamples) : null,
+    p90_ms: totalSamples ? Math.round(wP90 / totalSamples) : null,
+  };
+  metricsSnapshot = { generatedAt: Date.now(), stale: false, sse, by_source };
+  metricsSnapshotString = JSON.stringify(metricsSnapshot);
+}
+
+function withTimeout<T>(p: Promise<T>, ms = REFRESH_TIMEOUT_MS): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error('refresh-timeout')), ms)),
+  ]);
+}
+
+async function refreshMetricsSnapshot() {
+  try {
+    await withTimeout(Promise.resolve().then(() => computeSnapshot()), REFRESH_TIMEOUT_MS);
+  } catch (e) {
+    const age = Date.now() - (metricsSnapshot.generatedAt || 0);
+    metricsSnapshot = { ...metricsSnapshot, stale: age > SNAPSHOT_MAX_AGE_MS };
+    console.warn('[metrics] refresh failed:', (e as Error)?.message || e);
+  }
+}
+
+refreshMetricsSnapshot();
+setInterval(refreshMetricsSnapshot, SNAPSHOT_INTERVAL_MS).unref?.();
+
 app.get('/metrics-summary', (_req, res) => {
-  const sse = getSSEStats()
-  const by_source = getLatencySummary()
-  res.json({ sse, by_source })
+  const age = Date.now() - (metricsSnapshot.generatedAt || 0);
+  // encode staleness without re-stringifying full payload
+  if (age > SNAPSHOT_MAX_AGE_MS && metricsSnapshot.stale === false) {
+    metricsSnapshot.stale = true;
+    metricsSnapshotString = JSON.stringify(metricsSnapshot);
+  }
+  res.set('Content-Type', 'application/json');
+  res.set('Cache-Control', 'no-store');
+  res.send(metricsSnapshotString);
 });
+
+// --- Event loop lag monitor (diagnostic) ---
+setInterval(() => {
+  const t0 = process.hrtime.bigint();
+  setImmediate(() => {
+    const lagMs = Number(process.hrtime.bigint() - t0) / 1e6;
+    if (lagMs > 200) console.warn('[loop-lag]', Math.round(lagMs), 'ms');
+  });
+}, 1000).unref?.();
 // Start ingests unless disabled
 try {
   if (process.env.DISABLE_JOBS !== "1") {

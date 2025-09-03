@@ -1,10 +1,12 @@
 // backend/src/ingest/index.ts
-import { startBusinessWireIngest } from "./businesswire.js";
-import { startPRNewswireIngest } from "./prnewswire.js";
-import { startNasdaqHaltsIngest } from "./nasdaq_halts.js";
-import { startNyseNoticesIngest } from "./nyse_notices.js";
-import { startCmeNoticesIngest } from "./cme_notices.js";
-import { startSecPressIngest } from "./sec_press.js";
+import { startBusinessWireIngest } from "./businesswire";
+import { startPRNewswireIngest } from "./prnewswire";
+import { startNasdaqHaltsIngest } from "./nasdaq_halts";
+import { startNyseNoticesIngest } from "./nyse_notices";
+import { startCmeNoticesIngest } from "./cme_notices";
+import { startSecPressIngest } from "./sec_press";
+// During ts/tsx dev, omit .js extension to please TS module resolution
+import { startFedPressIngest } from "./fed_press";
 
 const REGISTRY: Record<string, () => void> = {
   businesswire: startBusinessWireIngest,
@@ -13,6 +15,7 @@ const REGISTRY: Record<string, () => void> = {
   nyse_notices: startNyseNoticesIngest,
   cme_notices: startCmeNoticesIngest,
   sec_press: startSecPressIngest,
+  fed_press: startFedPressIngest,
 };
 
 function parseEnabled(env?: string | null): string[] {

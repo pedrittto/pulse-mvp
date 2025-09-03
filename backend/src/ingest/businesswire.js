@@ -1,8 +1,8 @@
 // backend/src/ingest/businesswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-const FEED_URL = process.env.BUSINESSWIRE_RSS_URL ||
-    "https://www.businesswire.com/portal/site/home/news/subject/?vnsId=31350&rss=1";
+import { DEFAULT_URLS } from "../config/rssFeeds";
+const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 // Sub-2s lane
 const POLL_MS_BASE = 1200; // ~1.2s base clamp
 const JITTER_MS = 200; // ± jitter
@@ -12,6 +12,7 @@ let etag;
 let lastModified;
 let timer = null;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
+let warnedMissingUrl = false;
 function jitter() {
     return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
@@ -41,7 +42,7 @@ async function fetchFeed() {
         headers["if-none-match"] = etag;
     if (lastModified)
         headers["if-modified-since"] = lastModified;
-    const res = await fetch(FEED_URL, {
+    const res = await fetch(URL, {
         method: "GET",
         headers,
         redirect: "follow",
@@ -61,15 +62,20 @@ async function fetchFeed() {
 export function startBusinessWireIngest() {
     if (timer)
         return;
-    const schedule = () => { timer = setTimeout(tick, jitter()); };
+    if (!URL) { console.warn("[ingest:businesswire] missing URL; skipping fetch"); return; }
+    console.log("[ingest:businesswire] start");
+    const schedule = () => { timer = setTimeout(tick, jitter()); timer?.unref?.(); };
     const tick = async () => {
         try {
+            console.log("[ingest:businesswire] tick");
             const r = await fetchFeed();
             if (r.status === 304) {
+                console.log("[ingest:businesswire] not modified");
                 schedule();
                 return;
             }
             if (r.status !== 200 || !r.text) {
+                console.warn("[ingest:businesswire] error status", r.status);
                 schedule();
                 return;
             }
@@ -107,8 +113,8 @@ export function startBusinessWireIngest() {
                 lastGuids = new Set(Array.from(lastGuids).slice(-1000));
             }
         }
-        catch {
-            // keep hot path quiet
+        catch (e) {
+            console.warn("[ingest:businesswire] error", (e && e.message) || e);
         }
         finally {
             schedule();
