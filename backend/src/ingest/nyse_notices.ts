@@ -1,7 +1,7 @@
 // backend/src/ingest/nyse_notices.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 
 const URL = process.env.NYSE_NOTICES_URL ?? DEFAULT_URLS.NYSE_NOTICES_URL; // HTML/RSS/JSON
 
@@ -160,5 +160,6 @@ export function startNyseNoticesIngest() {
 export function stopNyseNoticesIngest() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+
 
 

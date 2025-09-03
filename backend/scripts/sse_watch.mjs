@@ -18,41 +18,57 @@ setTimeout(()=>ctrl.abort(), MAX_S*1000);
 
 (async () => {
   const url = BASE.replace(/\/$/, "") + SSE_PATH;
-  const res = await fetch(url, {
-    headers: {
-      Accept: "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive"
-    },
-    signal: ctrl.signal
-  });
-  if (!res.ok || !res.body) throw new Error(`SSE HTTP ${res.status}`);
+  const start = Date.now();
+  let attempt = 0;
+  while ((Date.now() - start) / 1000 < MAX_S) {
+    const jitter = Math.floor(Math.random() * 400); // 0–400ms
+    try {
+      const res = await fetch(url, {
+        headers: {
+          Accept: "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive"
+        },
+        signal: ctrl.signal
+      });
+      if (!res.ok || !res.body) throw new Error(`SSE HTTP ${res.status}`);
 
-  const dec = new TextDecoder();
-  let buf = "";
-  for await (const chunk of res.body) {
-    buf += dec.decode(chunk, { stream:true });
-    let idx;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const block = buf.slice(0, idx); buf = buf.slice(idx+2);
-      const dataLine = block.split("\n").find(l => l.startsWith("data:"));
-      if (!dataLine) continue;
-      try {
-        const payload = JSON.parse(dataLine.slice(5).trim());
-        const toMs = (x) => typeof x === 'number' ? x : (Number.isFinite(Date.parse(x)) ? Date.parse(x) : NaN);
-        const pub = payload?.published_at_ms ?? payload?.published_at ?? payload?.publishedAt;
-        const vis = payload?.visible_at_ms ?? payload?.visible_at ?? payload?.visibleAt;
-        const source = payload?.source || payload?.wire || "unknown";
-        const rec = { source, published_at_ms: toMs(pub), visible_at_ms: toMs(vis) };
-        if (Number.isFinite(rec.published_at_ms) && Number.isFinite(rec.visible_at_ms)) {
-          fs.appendFileSync(OUT, JSON.stringify(rec) + "\n");
-          console.log("sample+", rec);
-        } else {
-          try { console.log("evt-keys", Object.keys(payload)); } catch {}
+      const dec = new TextDecoder();
+      let buf = "";
+      attempt = 0; // reset backoff on successful connect
+      for await (const chunk of res.body) {
+        buf += dec.decode(chunk, { stream:true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const block = buf.slice(0, idx); buf = buf.slice(idx+2);
+          const dataLine = block.split("\n").find(l => l.startsWith("data:"));
+          if (!dataLine) continue;
+          try {
+            const payload = JSON.parse(dataLine.slice(5).trim());
+            const toMs = (x) => typeof x === 'number' ? x : (Number.isFinite(Date.parse(x)) ? Date.parse(x) : NaN);
+            const pub = payload?.published_at_ms ?? payload?.published_at ?? payload?.publishedAt;
+            const vis = payload?.visible_at_ms ?? payload?.visible_at ?? payload?.visibleAt;
+            const source = payload?.source || payload?.wire || "unknown";
+            const rec = { source, published_at_ms: toMs(pub), visible_at_ms: toMs(vis) };
+            if (Number.isFinite(rec.published_at_ms) && Number.isFinite(rec.visible_at_ms)) {
+              fs.appendFileSync(OUT, JSON.stringify(rec) + "\n");
+              console.log("sample+", rec);
+            } else {
+              try { console.log("evt-keys", Object.keys(payload)); } catch {}
+            }
+          } catch {}
         }
-      } catch {}
+      }
+      throw new Error('SSE closed');
+    } catch (e) {
+      const backoff = Math.min(30, 2 ** Math.min(6, attempt++)) + jitter / 1000;
+      const elapsed = (Date.now() - start) / 1000;
+      if (elapsed >= MAX_S) break;
+      console.warn(`[watcher] ${e?.code || e?.message || 'error'}; reconnecting in ${backoff.toFixed(1)}s…`);
+      await new Promise(r => setTimeout(r, backoff * 1000));
     }
   }
+  console.log('[watcher] done');
 })().catch(e => { if (e.name!=="AbortError") console.error(e); });
 
 

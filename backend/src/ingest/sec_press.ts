@@ -1,9 +1,9 @@
 // backend/src/ingest/sec_press.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 
-const URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
+const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 
 // Same clamps/jitter as PRN/BW
 const POLL_MS_BASE = 1200;
@@ -32,7 +32,7 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
   const headers: Record<string,string> = { "user-agent": "pulse-ingest/1.0" };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(URL, {
+  const res = await fetch(FEED_URL, {
     method: "GET",
     headers,
     redirect: "follow",
@@ -95,7 +95,7 @@ function parseHTML(html: string, base: string): Item[] {
 export function startSecPressIngest(): void {
   if (timer) return;
   console.log("[ingest:sec_press] start");
-  if (!URL) { console.warn("[ingest:sec_press] missing URL; skipping fetch"); return; }
+  if (!FEED_URL) { console.warn("[ingest:sec_press] missing URL; skipping fetch"); return; }
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
@@ -111,7 +111,7 @@ export function startSecPressIngest(): void {
       if (/xml|rss|atom/i.test(ct) || /<rss|<feed|<entry|<item/i.test(r.text)) {
         items = parseXML(r.text);
       } else if (r.text) {
-        items = parseHTML(r.text, URL!);
+        items = parseHTML(r.text, FEED_URL!);
       }
 
       const now = Date.now();
@@ -148,5 +148,9 @@ export function startSecPressIngest(): void {
 export function stopSecPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+
+
+
+
 
 

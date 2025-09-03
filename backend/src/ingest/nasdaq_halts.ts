@@ -1,7 +1,7 @@
 // backend/src/ingest/nasdaq_halts.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 
 // Prefer ENV override with safe fallback
 const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
@@ -195,5 +195,6 @@ export function startNasdaqHaltsIngest() {
 export function stopNasdaqHaltsIngest() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+
 
 
