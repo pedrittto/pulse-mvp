@@ -1,6 +1,7 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
+import { startIngests as startAllIngest } from "./ingest/index.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -160,17 +161,17 @@ setInterval(() => {
     if (lagMs > 200) console.warn('[loop-lag]', Math.round(lagMs), 'ms');
   });
 }, 1000).unref?.();
-// Start ingests unless disabled
-try {
-  if (!JOBS_DISABLED) {
-    const mod = require("./ingest/index.js");
-    if (mod && typeof mod.startIngests === "function") {
-      mod.startIngests();
-    }
-  } else {
-    console.log("[sched] DISABLE_JOBS=TRUE → ingest off");
+// Start ingests unless disabled (ESM import)
+if (JOBS_DISABLED) {
+  console.log("[sched] DISABLE_JOBS=TRUE → ingest off");
+} else {
+  console.log("[sched] calling startAllIngest()");
+  try {
+    startAllIngest();
+  } catch (e) {
+    console.error("[sched] startAllIngest() failed", (e as any) || e);
   }
-} catch {}
+}
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
 });
