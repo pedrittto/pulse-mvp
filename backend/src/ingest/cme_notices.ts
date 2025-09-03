@@ -1,9 +1,9 @@
 // backend/src/ingest/cme_notices.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 
-const URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
+const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
 // Match fast-lane clamps used by BW/PRN/Nasdaq
 const POLL_MS_BASE = 1200;
@@ -26,13 +26,13 @@ type Notice = { title: string; url: string; publishedAt: number; summary?: strin
 function stripTags(s: string): string { return s.replace(/<[^>]*>/g, ""); }
 function decodeHtml(s: string): string { return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
 
-async function httpGet(url: string, conditional = false): Promise<{ status: number; text?: string; etag?: string; lastModified?: string; headers?: Headers }>{
+async function httpGet(FEED_URL: string, conditional = false): Promise<{ status: number; text?: string; etag?: string; lastModified?: string; headers?: Headers }>{
   const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
   if (conditional) {
     if (etag) headers["if-none-match"] = etag;
     if (lastModified) headers["if-modified-since"] = lastModified;
   }
-  const res = await fetch(url, {
+  const res = await fetch(FEED_URL, {
     method: "GET",
     headers,
     redirect: "follow",
@@ -60,8 +60,8 @@ function pickFirstNoticeLinksFromHub(html: string, baseUrl: string, max = 10): s
     if (!/\/notices\//i.test(href)) continue;
     if (!/\.html?(?:$|[?#])/i.test(href)) continue;
     try {
-      const abs = new URL(href, baseUrl).toString();
-      if (!out.includes(abs)) out.push(abs);
+      const url = new URL(href, baseUrl).toString();
+      if (!out.includes(url)) out.push(url);
     } catch {}
   }
   if (out.length) return out;
@@ -70,8 +70,8 @@ function pickFirstNoticeLinksFromHub(html: string, baseUrl: string, max = 10): s
   const seen = new Set<string>();
   while ((m = dirRegex.exec(html)) && out.length < max) {
     try {
-      const abs = new URL(m[1], baseUrl).toString();
-      if (!seen.has(abs)) { out.push(abs); seen.add(abs); }
+      const url = new URL(m[1], baseUrl).toString();
+      if (!seen.has(url)) { out.push(url); seen.add(url); }
     } catch {}
   }
   return out;
@@ -101,20 +101,22 @@ function parseNoticePage(html: string, headers?: Headers): { title: string; publ
 export function startCmeNoticesIngest(): void {
   if (timer) return;
   console.log("[ingest:cme_notices] start");
-  if (!URL) { console.warn("[ingest:cme_notices] missing URL; skipping fetch"); return; }
+  if (!FEED_URL) { console.warn("[ingest:cme_notices] missing URL; skipping fetch"); return; }
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
       console.log("[ingest:cme_notices] tick");
-      const hub = await httpGet(URL, true);
+      const hub = await httpGet(FEED_URL, true);
       if (hub.status === 304) { console.log("[ingest:cme_notices] not modified"); schedule(); return; }
       if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); schedule(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
 
-      const links = pickFirstNoticeLinksFromHub(hub.text, URL, 10);
+      const links = pickFirstNoticeLinksFromHub(hub.text, FEED_URL, 10);
       const now = Date.now();
-      for (const url of links) {
+      for (const href of links) {
+        const baseUrl = FEED_URL;
+        const url = new URL(href, baseUrl).toString();
         const page = await httpGet(url);
         if (page.status !== 200 || !page.text) continue;
         const meta = parseNoticePage(page.text, page.headers);
@@ -152,5 +154,8 @@ export function startCmeNoticesIngest(): void {
 export function stopCmeNoticesIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+
+
+
 
 
