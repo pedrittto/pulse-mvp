@@ -20,6 +20,8 @@ try {
 }
 
 const app = express();
+const JOBS_DISABLED = /^(1|true)$/i.test(process.env.DISABLE_JOBS ?? "");
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const PORT = Number(process.env.PORT || 4000);
 const DISABLE_JOBS = process.env.DISABLE_JOBS === "1";
 
@@ -43,6 +45,16 @@ app.use(cors({
 }));
 
 registerSSE(app);
+
+if (DEBUG_INGEST) {
+  const sources = (process.env.INGEST_SOURCES || "businesswire")
+    .split(",")
+    .map(s => s.trim())
+    .filter(Boolean);
+  app.get("/debug/enabled-sources", (_req, res) => {
+    res.json({ sources, disable_jobs: JOBS_DISABLED, now: Date.now() });
+  });
+}
 
 app.get("/_debug/env", (_req, res) => {
   res.json({ allowed: ALLOWED, raw: process.env.CORS_ORIGIN });
@@ -150,11 +162,13 @@ setInterval(() => {
 }, 1000).unref?.();
 // Start ingests unless disabled
 try {
-  if (process.env.DISABLE_JOBS !== "1") {
+  if (!JOBS_DISABLED) {
     const mod = require("./ingest/index.js");
     if (mod && typeof mod.startIngests === "function") {
       mod.startIngests();
     }
+  } else {
+    console.log("[sched] DISABLE_JOBS=TRUE → ingest off");
   }
 } catch {}
 app.listen(PORT, "0.0.0.0", () => {

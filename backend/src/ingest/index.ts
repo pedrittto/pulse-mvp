@@ -8,6 +8,8 @@ import { startSecPressIngest } from "./sec_press.js";
 // During ts/tsx dev, omit .js extension to please TS module resolution
 import { startFedPressIngest } from "./fed_press.js";
 
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
+
 const REGISTRY: Record<string, () => void> = {
   businesswire: startBusinessWireIngest,
   prnewswire: startPRNewswireIngest,
@@ -25,9 +27,13 @@ function parseEnabled(env?: string | null): string[] {
 
 export function startIngests(): void {
   const enabled = parseEnabled(process.env.INGEST_SOURCES);
+  if (DEBUG_INGEST) console.log("[sched] enabled sources:", enabled);
   for (const key of enabled) {
     const starter = REGISTRY[key];
-    if (starter) starter();
+    if (starter) {
+      if (DEBUG_INGEST) console.log(`[ingest:${key}] start`);
+      starter();
+    }
   }
 }
 

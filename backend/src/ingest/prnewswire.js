@@ -12,6 +12,7 @@ let lastModified;
 let timer = null;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 function jitter() {
     return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
@@ -39,6 +40,7 @@ async function fetchFeed() {
         headers["if-none-match"] = etag;
     if (lastModified)
         headers["if-modified-since"] = lastModified;
+    if (DEBUG_INGEST) console.log("[ingest:prnewswire] fetching", URL, { etag, ims: lastModified });
     const res = await fetch(URL, {
         method: "GET",
         headers,
@@ -46,6 +48,7 @@ async function fetchFeed() {
         cache: "no-store",
         signal: AbortSignal.timeout(900),
     });
+    if (DEBUG_INGEST) console.log("[ingest:prnewswire] http", res.status, { etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified") });
     if (res.status === 304)
         return { status: 304 };
     const text = await res.text();
@@ -61,7 +64,12 @@ export function startPRNewswireIngest() {
         return;
     console.log("[ingest:prnewswire] start");
     if (!URL) { if (!warnedMissingUrl) { console.warn("[ingest:prnewswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
-    const schedule = () => { timer = setTimeout(tick, jitter()); timer?.unref?.(); };
+    const schedule = () => {
+        const nextMs = jitter();
+        if (DEBUG_INGEST) console.log("[ingest:prnewswire] tick → next in", nextMs, "ms");
+        timer = setTimeout(tick, nextMs);
+        timer?.unref?.();
+    };
     const tick = async () => {
         try {
             // mark tick start
@@ -69,7 +77,7 @@ export function startPRNewswireIngest() {
             console.log("[ingest:prnewswire] tick");
             const r = await fetchFeed();
             if (r.status === 304) {
-                console.log("[ingest:prnewswire] not modified");
+                if (DEBUG_INGEST) console.log("[ingest:prnewswire] not modified");
                 schedule();
                 return;
             }
@@ -93,6 +101,7 @@ export function startPRNewswireIngest() {
                     continue;
                 // emit-first
                 const visibleAt = Date.now();
+                if (DEBUG_INGEST) console.log("[ingest:prnewswire] NEW", { published_at_ms: it.publishedAt, id: it.guid });
                 broadcastBreaking({
                     id: it.guid,
                     source: "prnewswire",
