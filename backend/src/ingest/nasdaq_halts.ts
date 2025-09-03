@@ -1,9 +1,10 @@
 // backend/src/ingest/nasdaq_halts.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
+import { DEFAULT_URLS } from "../config/rssFeeds";
 
-// URL must be provided via env; adapter idles if missing
-const FEED_URL = process.env.NASDAQ_HALTS_URL;
+// Prefer ENV override with safe fallback
+const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
 
 // Match fast-lane clamps used by BW/PRN
 const POLL_MS_BASE = 1200;
@@ -15,17 +16,17 @@ let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
+let warnedMissingUrl = false;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 
 async function fetchFeed(): Promise<{ status: number; text?: string; json?: any; etag?: string; lastModified?: string }> {
-  if (!FEED_URL) return { status: 599 }; // idle if env not set
   const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(FEED_URL, {
+  const res = await fetch(URL, {
     method: "GET",
     headers,
     redirect: "follow",
@@ -135,13 +136,15 @@ function decodeHtml(s: string): string { return s.replace(/&amp;/g, "&").replace
 
 export function startNasdaqHaltsIngest() {
   if (timer) return;
-  const schedule = () => { timer = setTimeout(tick, jitter()); };
+  console.log("[ingest:nasdaq_halts] start");
+  if (!URL) { console.warn("[ingest:nasdaq_halts] missing URL; skipping fetch"); return; }
+  const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      console.log("[ingest:nasdaq_halts] tick");
       const r = await fetchFeed();
-      if (r.status === 599) { schedule(); return; } // no URL configured
-      if (r.status === 304) { schedule(); return; }
-      if (r.status !== 200) { schedule(); return; }
+      if (r.status === 304) { console.log("[ingest:nasdaq_halts] not modified"); schedule(); return; }
+      if (r.status !== 200) { console.warn("[ingest:nasdaq_halts] error status", r.status); schedule(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -169,7 +172,7 @@ export function startNasdaqHaltsIngest() {
           id: canonicalId,
           source: "nasdaq_halts",
           title: `Nasdaq Trading Halt: ${rec.symbol}${rec.reason ? ` (${rec.reason})` : ""}`,
-          url: rec.url || FEED_URL || "",
+          url: rec.url || URL || "",
           published_at: publishedAt,
           visible_at: visibleAt,
         });
@@ -180,8 +183,8 @@ export function startNasdaqHaltsIngest() {
       if (lastIds.size > 5000) {
         lastIds = new Set(Array.from(lastIds).slice(-2500));
       }
-    } catch {
-      // keep hot path quiet
+    } catch (e) {
+      console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
     } finally {
       schedule();
     }

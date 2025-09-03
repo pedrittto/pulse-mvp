@@ -1,9 +1,9 @@
-// backend/src/ingest/sec_press.ts
+// backend/src/ingest/fed_press.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds";
 
-const URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
+const URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
 
 // Same clamps/jitter as PRN/BW
 const POLL_MS_BASE = 1200;
@@ -15,7 +15,6 @@ let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
 let watermarkPublishedAt = 0;
-let warnedMissingUrl = false;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -78,9 +77,6 @@ function parseHTML(html: string, base: string): Item[] {
     const href = m[1];
     const titleText = decodeHtml(stripTags(m[2]).trim());
     if (!titleText) continue;
-    if (!/sec\.gov|press/i.test(href) && !/press/i.test(titleText)) {
-      // heuristics: prefer press links/anchors
-    }
     try {
       const url = new URL(href, base).toString();
       const head = html.slice(Math.max(0, m.index - 400), Math.min(html.length, m.index + 400));
@@ -92,17 +88,15 @@ function parseHTML(html: string, base: string): Item[] {
   return out;
 }
 
-export function startSecPressIngest(): void {
+export function startFedPressIngest(): void {
   if (timer) return;
-  console.log("[ingest:sec_press] start");
-  if (!URL) { console.warn("[ingest:sec_press] missing URL; skipping fetch"); return; }
-  const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
+  const schedule = () => { timer = setTimeout(tick, jitter()); };
+  if (!URL) { console.warn("[ingest:fed_press] missing URL; skipping fetch"); return; }
   const tick = async () => {
     try {
-      console.log("[ingest:sec_press] tick");
       const r = await fetchOnce();
-      if (r.status === 304) { console.log("[ingest:sec_press] not modified"); schedule(); return; }
-      if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); schedule(); return; }
+      if (r.status === 304) { schedule(); return; }
+      if (r.status !== 200 || !r.text) { schedule(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -117,7 +111,7 @@ export function startSecPressIngest(): void {
       const now = Date.now();
       for (const it of items) {
         const publishedAt = it.publishedAt || now;
-        const canonicalId = `sec_press:${it.url}`;
+        const canonicalId = `fed_press:${it.url}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
         if (publishedAt < now - FRESH_MS) continue;
@@ -126,18 +120,18 @@ export function startSecPressIngest(): void {
         const visibleAt = Date.now();
         broadcastBreaking({
           id: canonicalId,
-          source: "sec_press",
+          source: "fed_press",
           title: it.title,
           url: it.url,
           published_at: publishedAt,
           visible_at: visibleAt,
         });
-        recordLatency("sec_press", publishedAt, visibleAt);
+        recordLatency("fed_press", publishedAt, visibleAt);
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
-    } catch (e) {
-      console.warn("[ingest:sec_press] error", (e as any)?.message || e);
+    } catch {
+      // keep hot path quiet
     } finally {
       schedule();
     }
@@ -145,7 +139,7 @@ export function startSecPressIngest(): void {
   schedule();
 }
 
-export function stopSecPressIngest(): void {
+export function stopFedPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 

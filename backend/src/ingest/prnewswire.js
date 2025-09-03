@@ -1,8 +1,8 @@
 // backend/src/ingest/prnewswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-// Set PRN_RSS_URL in env to enable; if missing, connector idles.
-const FEED_URL = process.env.PRN_RSS_URL;
+import { DEFAULT_URLS } from "../config/rssFeeds";
+const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
 const POLL_MS_BASE = 1200; // ~1.2 s clamp
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
@@ -11,6 +11,7 @@ let etag;
 let lastModified;
 let timer = null;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
+let warnedMissingUrl = false;
 function jitter() {
     return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
@@ -33,14 +34,12 @@ function extractItems(xml) {
         .filter(it => it.guid && it.title && it.link);
 }
 async function fetchFeed() {
-    if (!FEED_URL)
-        return { status: 599 }; // idle if env not set
     const headers = { "user-agent": "pulse-ingest/1.0" };
     if (etag)
         headers["if-none-match"] = etag;
     if (lastModified)
         headers["if-modified-since"] = lastModified;
-    const res = await fetch(FEED_URL, {
+    const res = await fetch(URL, {
         method: "GET",
         headers,
         redirect: "follow",
@@ -60,19 +59,22 @@ async function fetchFeed() {
 export function startPRNewswireIngest() {
     if (timer)
         return;
-    const schedule = () => { timer = setTimeout(tick, jitter()); };
+    console.log("[ingest:prnewswire] start");
+    if (!URL) { if (!warnedMissingUrl) { console.warn("[ingest:prnewswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
+    const schedule = () => { timer = setTimeout(tick, jitter()); timer?.unref?.(); };
     const tick = async () => {
         try {
+            // mark tick start
+            // lightweight: single line, no payloads
+            console.log("[ingest:prnewswire] tick");
             const r = await fetchFeed();
-            if (r.status === 599) {
-                schedule();
-                return;
-            } // no URL configured
             if (r.status === 304) {
+                console.log("[ingest:prnewswire] not modified");
                 schedule();
                 return;
             }
             if (r.status !== 200 || !r.text) {
+                console.warn("[ingest:prnewswire] error status", r.status);
                 schedule();
                 return;
             }
@@ -108,8 +110,8 @@ export function startPRNewswireIngest() {
                 lastGuids = new Set(Array.from(lastGuids).slice(-1000));
             }
         }
-        catch {
-            // keep hot path quiet
+        catch (e) {
+            console.warn("[ingest:prnewswire] error", (e && e.message) || e);
         }
         finally {
             schedule();

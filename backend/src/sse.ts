@@ -28,6 +28,8 @@ export function registerSSE(app: any) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     (res as any).flushHeaders?.();
+    // Send immediate comment ping to emit first bytes and avoid edge idle timeouts
+    res.write(":\n\n");
 
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
     clients.set(id, res);
@@ -35,10 +37,11 @@ export function registerSSE(app: any) {
     // initial event
     eventsSent++; res.write(`event: hello\ndata: {"id":"${id}"}\n\n`);
 
-    // keepalive pings
+    // keepalive heartbeat (SSE comment ping) every 15s
     const keepalive = setInterval(() => {
-      if (!res.writableEnded) { eventsSent++; res.write(`event: ping\ndata: ${Date.now()}\n\n`); }
+      if (!res.writableEnded) { eventsSent++; res.write(`:\n\n`); }
     }, 15000);
+    (keepalive as any).unref?.();
 
     req.on("close", () => {
       clearInterval(keepalive);

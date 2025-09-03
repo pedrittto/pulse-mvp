@@ -1,8 +1,9 @@
 // backend/src/ingest/cme_notices.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
+import { DEFAULT_URLS } from "../config/rssFeeds";
 
-const FEED_URL = process.env.CME_NOTICES_URL;
+const URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
 // Match fast-lane clamps used by BW/PRN/Nasdaq
 const POLL_MS_BASE = 1200;
@@ -14,6 +15,7 @@ let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
+let warnedMissingUrl = false;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -98,17 +100,19 @@ function parseNoticePage(html: string, headers?: Headers): { title: string; publ
 
 export function startCmeNoticesIngest(): void {
   if (timer) return;
-  const schedule = () => { timer = setTimeout(tick, jitter()); };
+  console.log("[ingest:cme_notices] start");
+  if (!URL) { console.warn("[ingest:cme_notices] missing URL; skipping fetch"); return; }
+  const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      if (!FEED_URL) { schedule(); return; }
-      const hub = await httpGet(FEED_URL, true);
-      if (hub.status === 304) { schedule(); return; }
-      if (hub.status !== 200 || !hub.text) { schedule(); return; }
+      console.log("[ingest:cme_notices] tick");
+      const hub = await httpGet(URL, true);
+      if (hub.status === 304) { console.log("[ingest:cme_notices] not modified"); schedule(); return; }
+      if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); schedule(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
 
-      const links = pickFirstNoticeLinksFromHub(hub.text, FEED_URL, 10);
+      const links = pickFirstNoticeLinksFromHub(hub.text, URL, 10);
       const now = Date.now();
       for (const url of links) {
         const page = await httpGet(url);
@@ -136,8 +140,8 @@ export function startCmeNoticesIngest(): void {
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
-    } catch {
-      // keep hot path quiet
+    } catch (e) {
+      console.warn("[ingest:cme_notices] error", (e as any)?.message || e);
     } finally {
       schedule();
     }
