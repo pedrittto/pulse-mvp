@@ -3,6 +3,8 @@ import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds";
 const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
+let BW_BACKOFF_UNTIL = 0; // epoch ms; skip ticks until this time after 403
+let BW_LAST_SKIP_LOG = 0; // epoch ms, rate-limit skip logs
 // Sub-2s lane
 const POLL_MS_BASE = 1200; // ~1.2s base clamp
 const JITTER_MS = 200; // ± jitter
@@ -37,18 +39,36 @@ function extractItems(xml) {
         .filter(it => it.guid && it.title && it.link);
 }
 async function fetchFeed() {
-    const headers = { "user-agent": "pulse-ingest/1.0" };
+    const headers = {
+        "User-Agent": "PulseBot/1.0 (+https://pulsenewsai.com)",
+        "Accept": "application/rss+xml, text/html;q=0.8,*/*;q=0.5",
+    };
     if (etag)
         headers["if-none-match"] = etag;
     if (lastModified)
         headers["if-modified-since"] = lastModified;
+
+    // 5s timeout just for BusinessWire
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 5000);
+
     const res = await fetch(URL, {
         method: "GET",
         headers,
         redirect: "follow",
         cache: "no-store",
-        signal: AbortSignal.timeout(900),
+        signal: ctrl.signal,
     });
+
+    clearTimeout(to);
+
+    // Gentle backoff on WAF 403 to avoid hammering
+    if (res.status === 403) {
+        BW_BACKOFF_UNTIL = Date.now() + 10 * 60 * 1000; // 10 minutes
+        console.warn('[ingest:businesswire] 403 from BusinessWire — backing off 10m');
+        return;
+    }
+
     if (res.status === 304)
         return { status: 304 };
     const text = await res.text();
@@ -67,8 +87,19 @@ export function startBusinessWireIngest() {
     const schedule = () => { timer = setTimeout(tick, jitter()); timer?.unref?.(); };
     const tick = async () => {
         try {
+            // Skip this tick if still backing off (and rate-limit skip logs)
+            const now = Date.now();
+            if (now < BW_BACKOFF_UNTIL) {
+                if (now - BW_LAST_SKIP_LOG > 60_000) {
+                    console.warn("[ingest:businesswire] skip (backoff)", Math.ceil((BW_BACKOFF_UNTIL - now) / 1000), "s left");
+                    BW_LAST_SKIP_LOG = now;
+                }
+                schedule();
+                return;
+            }
             console.log("[ingest:businesswire] tick");
             const r = await fetchFeed();
+            if (!r) { schedule(); return; }
             if (r.status === 304) {
                 console.log("[ingest:businesswire] not modified");
                 schedule();
