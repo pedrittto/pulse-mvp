@@ -1,7 +1,7 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
-import { startIngests } from "./ingest/index.js";
+import { startIngests, getIngestDebug } from "./ingest/index.js";
 import { startMemWatch } from "./diagnostics/mem_watch.js";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -79,16 +79,26 @@ app.post("/_debug/push", express.json(), (req, res) => {
   return res.json({ ok: true, sent });
 });
 
-// Lightweight debug of ingest state (active adapter names and timer counts)
-app.get("/debug/ingest", (_req, res) => {
+// Synchronous, ESM-safe ingest debug (always responds JSON)
+app.get('/debug/ingest', (_req, res) => {
   try {
-    // Best-effort dynamic import from dist at runtime; ignore if missing
-    const mod = require("./ingest/index.js");
-    const getSSE = typeof getSSEStats === 'function' ? getSSEStats() : undefined;
-    const info = typeof mod?.getIngestDebug === 'function' ? mod.getIngestDebug() : { adapters: [], timers: 0 };
-    res.json({ ok: true, adapters: info.adapters, timers: info.timers, sse: getSSE });
-  } catch {
-    res.json({ ok: true, adapters: [], timers: 0 });
+    const info = (typeof getIngestDebug === 'function') ? getIngestDebug() : { error: 'no-debug-fn' } as any;
+    const safe = {
+      started: !!(info as any)?.started,
+      enabled: Array.isArray((info as any)?.enabled) ? (info as any).enabled.map((x: any) => String(x)) : [],
+      adapters: Array.isArray((info as any)?.adapters)
+        ? (info as any).adapters.map((a: any) => ({
+            name: String(a?.name ?? ''),
+            timers: Number(a?.timers ?? 0),
+            state: (a as any)?.state ?? undefined,
+            nextInMs: (typeof (a as any)?.nextInMs === 'number') ? (a as any).nextInMs : undefined,
+          }))
+        : []
+    };
+    res.status(200).type('application/json').send(JSON.stringify(safe));
+  } catch (e) {
+    try { console.error('[debug/ingest] error', e); } catch {}
+    res.status(500).type('application/json').send(JSON.stringify({ error: String(e as any) }));
   }
 });
 
@@ -179,6 +189,14 @@ setInterval(() => {
     if (lagMs > 200) console.warn('[loop-lag]', Math.round(lagMs), 'ms');
   });
 }, 1000).unref?.();
+
+// Global error handler to ensure JSON 500s instead of proxy 502s
+app.use((err: any, _req: any, res: any, _next: any) => {
+  try { console.error('[express] unhandled', err); } catch {}
+  if (!res.headersSent) {
+    res.status(500).type('application/json').send(JSON.stringify({ error: 'internal' }));
+  }
+});
 
 // Listen first, then start ingest asynchronously
 app.listen(PORT, () => {
