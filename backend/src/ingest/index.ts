@@ -1,80 +1,83 @@
 // backend/src/ingest/index.ts
-// NodeNext/ESM requires explicit .js for runtime-resolved imports in dist/
-import { startBusinessWireIngest as start, getTimerCount as getBwTimer } from "./businesswire.js";
-import { startPRNewswireIngest  as startPr, getTimerCount as getPrTimer } from "./prnewswire.js";
-import { startNasdaqHaltsIngest as startNa, getTimerCount as getNaTimer } from "./nasdaq_halts.js";
-import { startNyseNoticesIngest as startNy, getTimerCount as getNyTimer } from "./nyse_notices.js";
-import { startCmeNoticesIngest  as startCm, getTimerCount as getCmTimer } from "./cme_notices.js";
-import { startSecPressIngest    as startSe, getTimerCount as getSeTimer } from "./sec_press.js";
-import { startFedPressIngest    as startFe, getTimerCount as getFeTimer } from "./fed_press.js";
+// ESM imports — explicit .js extensions
+import * as BW  from './businesswire.js';
+import * as PRN from './prnewswire.js';
+import * as NA  from './nasdaq_halts.js';
+import * as NY  from './nyse_notices.js';
+import * as CME from './cme_notices.js';
+import * as SEC from './sec_press.js';
+import * as FED from './fed_press.js';
 
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
-const registry: Record<string, () => void> = {
-  businesswire: start,
-  prnewswire:   startPr,
-  nasdaq_halts: startNa,
-  nyse_notices: startNy,
-  cme_notices:  startCm,
-  sec_press:    startSe,
-  fed_press:    startFe,
+// Registry holds full modules so we can introspect timers/state
+type AdapterMod = {
+  start: () => void;
+  getTimerCount?: () => number;
+  getState?: () => string;
+  nextInMs?: () => number;
 };
 
-let __ingestStarted = false;
-let __enabledNames: string[] = [];
+const registry: Record<string, AdapterMod> = {
+  businesswire: BW as unknown as AdapterMod,
+  prnewswire:   PRN as unknown as AdapterMod,
+  nasdaq_halts: NA as unknown as AdapterMod,
+  nyse_notices: NY as unknown as AdapterMod,
+  cme_notices:  CME as unknown as AdapterMod,
+  sec_press:    SEC as unknown as AdapterMod,
+  fed_press:    FED as unknown as AdapterMod,
+};
 
 function parseSources(env?: string): string[] {
-  return (env ?? '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
+  return (env ?? "").split(",").map(s => s.trim()).filter(Boolean);
 }
+
+let __ingestStarted = false;
+let __enabled: string[] = [];
 
 export function startIngests(): void {
   if (__ingestStarted) {
     console.warn('[sched] startIngests called again — ignored');
     return;
   }
-  __ingestStarted = true;
 
   const wanted = parseSources(process.env.INGEST_SOURCES);
-  const registryKeys = Object.keys(registry);
-  console.log('[registry:keys]', registryKeys.join(','));
+  const keys = Object.keys(registry);
+  console.log('[registry:keys]', keys.join(','));
 
   if (!wanted.length) {
     console.error('[boot][FATAL] INGEST_SOURCES is empty or unparsable'); process.exit(1);
   }
-  const unknown = wanted.filter(n => !Object.prototype.hasOwnProperty.call(registry, n));
+  const unknown = wanted.filter(n => Object.hasOwn(registry, n) === false);
   if (unknown.length) {
     console.error('[boot][FATAL] Unknown sources in INGEST_SOURCES:', unknown.join(',')); process.exit(1);
   }
 
-  const enabled = wanted.filter(n => registry[n]);
+  const enabled = wanted.filter(n => Object.hasOwn(registry, n));
   console.log('[sched] enabled sources:', enabled.join(', ') || '(none)');
-  __enabledNames = enabled.slice();
+
+  __ingestStarted = true;
+  __enabled = enabled.slice();
 
   for (const name of enabled) {
     console.log(`[ingest:${name}] start`);
-    try { registry[name]!(); } catch (e) {
-      console.error(`[ingest:${name}] failed to start`, e); process.exit(1);
+    try {
+      registry[name].start();
+    } catch (err) {
+      console.error(`[ingest:${name}] failed to start`, err);
+      process.exit(1);
     }
   }
 }
 
-export function getIngestDebug(): { adapters: string[]; timers: number } {
-  try {
-    const timers =
-      (getBwTimer?.() || 0) +
-      (getPrTimer?.() || 0) +
-      (getNaTimer?.() || 0) +
-      (getNyTimer?.() || 0) +
-      (getCmTimer?.() || 0) +
-      (getSeTimer?.() || 0) +
-      (getFeTimer?.() || 0);
-    return { adapters: __enabledNames.slice(), timers };
-  } catch {
-    return { adapters: __enabledNames.slice(), timers: 0 };
-  }
+export function getIngestDebug() {
+  const adapters = Object.entries(registry).map(([name, mod]) => ({
+    name,
+    timers: Number(mod.getTimerCount?.() ?? 0),
+    state: mod.getState?.(),
+    nextInMs: typeof mod.nextInMs === 'function' ? mod.nextInMs() : undefined,
+  }));
+  return { started: __ingestStarted, enabled: __enabled.slice(), adapters };
 }
 
 
