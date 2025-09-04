@@ -4,6 +4,7 @@ import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
+import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
@@ -59,7 +60,8 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
   if (res.status === 304) return { status: 304 };
   const cl = Number(res.headers.get("content-length") || 0);
   if (cl && cl > MAX_BYTES_HTML) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
-  const text = await res.text().catch(() => undefined);
+  let text: string | undefined;
+  try { text = await readTextWithCap(res as any, MAX_BYTES_HTML); } catch (e) { if ((e as any)?.message === 'cap_exceeded') { respTooLarge++; } throw e; }
   const dt = Date.now() - t0;
   return {
     status: res.status,

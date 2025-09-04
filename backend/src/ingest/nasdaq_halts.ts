@@ -3,6 +3,7 @@ import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
+import { readTextWithCap } from "./read_text_cap.js";
 import { getGovernor } from "./governor.js";
 
 // Prefer ENV override with safe fallback
@@ -56,11 +57,14 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
   };
   try {
     if (/json/i.test(ct)) {
-      const json = await res.json().catch(() => undefined);
+      let raw: string | undefined;
+      try { raw = await readTextWithCap(res as any, MAX_BYTES_HTML); } catch (e) { if ((e as any)?.message === 'cap_exceeded') { respTooLarge++; } throw e; }
+      const json = raw ? JSON.parse(raw) : undefined;
       return { ...common, json } as any;
     }
   } catch {}
-  const text = await res.text().catch(() => undefined);
+  let text: string | undefined;
+  try { text = await readTextWithCap(res as any, MAX_BYTES_HTML); } catch (e) { if ((e as any)?.message === 'cap_exceeded') { respTooLarge++; } throw e; }
   return { ...common, text } as any;
 }
 

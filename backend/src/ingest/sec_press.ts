@@ -4,6 +4,7 @@ import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
+import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 
@@ -51,7 +52,8 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
     signal: AbortSignal.timeout(900),
   });
   if (res.status === 304) return { status: 304 };
-  const text = await res.text().catch(() => undefined);
+  let text: string | undefined;
+  try { text = await readTextWithCap(res as any, MAX_BYTES_HTML); } catch (e) { if ((e as any)?.message === 'cap_exceeded') { respTooLarge++; } throw e; }
   return { status: res.status, text, etag: res.headers.get("etag") ?? undefined, lastModified: res.headers.get("last-modified") ?? undefined, ct: res.headers.get("content-type") ?? undefined };
 }
 
