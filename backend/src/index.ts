@@ -2,7 +2,6 @@
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
 import { startIngests, getIngestDebug } from "./ingest/index.js";
-import { startMemWatch } from "./diagnostics/mem_watch.js";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
@@ -170,15 +169,13 @@ refreshMetricsSnapshot();
 setInterval(refreshMetricsSnapshot, SNAPSHOT_INTERVAL_MS).unref?.();
 
 app.get('/metrics-summary', (_req, res) => {
-  const age = Date.now() - (metricsSnapshot.generatedAt || 0);
-  // encode staleness without re-stringifying full payload
-  if (age > SNAPSHOT_MAX_AGE_MS && metricsSnapshot.stale === false) {
-    metricsSnapshot.stale = true;
-    metricsSnapshotString = JSON.stringify(metricsSnapshot);
+  try {
+    const data = typeof getLatencySummary === 'function' ? getLatencySummary() : {};
+    res.status(200).type('application/json').send(JSON.stringify(data ?? {}));
+  } catch (e) {
+    console.error('[metrics] summary error', e);
+    res.status(200).type('application/json').send(JSON.stringify({ fallback: true, error: String(e) }));
   }
-  res.set('Content-Type', 'application/json');
-  res.set('Cache-Control', 'no-store');
-  res.send(metricsSnapshotString);
 });
 
 // --- Event loop lag monitor (diagnostic) ---
@@ -214,8 +211,7 @@ app.listen(PORT, () => {
   });
 });
 
-// lightweight memory guard (requires NODE_OPTIONS=--expose-gc for GC hint)
-startMemWatch();
+// mem-watch removed from runtime
 
 
 
