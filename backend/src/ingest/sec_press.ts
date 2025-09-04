@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 
@@ -14,6 +15,9 @@ let lastIds = new Set<string>();
 let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
+const GOV = getGovernor();
+const SOURCE = "sec_press";
+const HOST: "sec.gov" = "sec.gov";
 let watermarkPublishedAt = 0;
 let warnedMissingUrl = false;
 
@@ -101,9 +105,15 @@ export function startSecPressIngest(): void {
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:sec_press] tick");
+      const backoffMs = GOV.getNextInMs(SOURCE);
+      if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429/403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      const tok = GOV.claimHostToken(HOST);
+      if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip budget wait, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       const r = await fetchOnce();
-      if (r.status === 304) { if (DEBUG_INGEST) console.log("[ingest:sec_press] not modified"); schedule(); return; }
-      if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); schedule(); return; }
+      if (r.status === 304) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log("[ingest:sec_press] 304, next in", d, "ms"); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 429) { const d = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 403) { const d = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -140,7 +150,8 @@ export function startSecPressIngest(): void {
     } catch (e) {
       console.warn("[ingest:sec_press] error", (e as any)?.message || e);
     } finally {
-      schedule();
+      const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      timer = setTimeout(tick, d); (timer as any)?.unref?.();
     }
   };
   schedule();

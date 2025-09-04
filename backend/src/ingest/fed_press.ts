@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
 
@@ -15,6 +16,9 @@ let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
 let watermarkPublishedAt = 0;
+const GOV = getGovernor();
+const SOURCE = "fed_press";
+const HOST: "sec.gov" = "sec.gov"; // many FED endpoints are served via gov domains; adjust if needed
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -91,14 +95,20 @@ function parseHTML(html: string, base: string): Item[] {
 
 export function startFedPressIngest(): void {
   if (timer) return;
-  const schedule = () => { timer = setTimeout(tick, jitter()); };
+  const schedule = (ms?: number) => { timer = setTimeout(tick, typeof ms === 'number' ? ms : jitter()); (timer as any)?.unref?.(); };
   if (!FEED_URL) { console.warn("[ingest:fed_press] missing URL; skipping fetch"); return; }
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:fed_press] tick");
+      const backoffMs = GOV.getNextInMs(SOURCE);
+      if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); schedule(d); return; }
+      const tok = GOV.claimHostToken(HOST);
+      if (!tok.ok) { schedule(Math.max(500, tok.waitMs)); return; }
       const r = await fetchOnce();
-      if (r.status === 304) { schedule(); return; }
-      if (r.status !== 200 || !r.text) { schedule(); return; }
+      if (r.status === 304) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); schedule(d); return; }
+      if (r.status === 429) { const d = GOV.nextDelayAfter(SOURCE, 'R429'); schedule(d); return; }
+      if (r.status === 403) { const d = GOV.nextDelayAfter(SOURCE, 'R403'); schedule(d); return; }
+      if (r.status !== 200 || !r.text) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); schedule(d); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -135,7 +145,8 @@ export function startFedPressIngest(): void {
     } catch {
       // keep hot path quiet
     } finally {
-      schedule();
+      const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      schedule(d);
     }
   };
   schedule();

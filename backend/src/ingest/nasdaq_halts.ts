@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { getGovernor } from "./governor.js";
 
 // Prefer ENV override with safe fallback
 const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
@@ -11,6 +12,9 @@ const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
 const TIMEOUT_MS = 1500; // per-request timeout for NASDAQ
+const GOV = getGovernor();
+const SOURCE = "nasdaq_halts";
+const HOST: "nasdaqtrader.com" = "nasdaqtrader.com";
 
 let lastIds = new Set<string>();
 let etag: string | undefined;
@@ -144,12 +148,44 @@ export function startNasdaqHaltsIngest() {
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] tick");
+      // Backoff/state/budget gates
+      const backoffMs = GOV.getNextInMs(SOURCE);
+      if (GOV.getState(SOURCE) === 'BACKOFF') {
+        const delay = Math.max(500, backoffMs);
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 429/403 backoff, next in', delay, 'ms');
+        timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+        return;
+      }
+      const token = GOV.claimHostToken(HOST);
+      if (!token.ok) {
+        const wait = Math.max(500, token.waitMs);
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip budget wait, next in', wait, 'ms');
+        timer = setTimeout(tick, wait); (timer as any)?.unref?.();
+        return;
+      }
       const t0 = Date.now();
       const r = await fetchFeed();
       const dt = Date.now() - t0;
-      if (r.status === 304) { if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] not modified in', dt, 'ms'); schedule(); return; }
+      if (r.status === 304) {
+        const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_304');
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 304 in', dt, 'ms, next in', delay, 'ms');
+        timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+        return;
+      }
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] http', r.status, 'in', dt, 'ms', r.etag || r.lastModified || '');
-      if (r.status !== 200) { console.warn("[ingest:nasdaq_halts] error status", r.status); schedule(); return; }
+      if (r.status === 429) {
+        const delay = GOV.nextDelayAfter(SOURCE, 'R429');
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 429 backoff in', dt, 'ms, next in', delay, 'ms');
+        timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+        return;
+      }
+      if (r.status === 403) {
+        const delay = GOV.nextDelayAfter(SOURCE, 'R403');
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 403 backoff in', dt, 'ms, next in', delay, 'ms');
+        timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+        return;
+      }
+      if (r.status !== 200) { console.warn("[ingest:nasdaq_halts] error status", r.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -188,13 +224,19 @@ export function startNasdaqHaltsIngest() {
       if (lastIds.size > 5000) {
         lastIds = new Set(Array.from(lastIds).slice(-2500));
       }
+      const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: records.length ? (now - records[0].halt_time) : undefined });
+      if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, next in', delay, 'ms');
+      timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+      return;
     } catch (e) {
-      if (DEBUG_INGEST && ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)))) {
-        console.log('[ingest:nasdaq_halts] timeout', TIMEOUT_MS, 'ms');
-      }
+      const isTo = ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)));
+      if (DEBUG_INGEST && isTo) { console.log('[ingest:nasdaq_halts] timeout', TIMEOUT_MS, 'ms'); }
+      const delay = GOV.nextDelayAfter(SOURCE, isTo ? 'TIMEOUT' : 'HTTP_200');
       console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
+      timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+      return;
     } finally {
-      schedule();
+      // scheduled above in each path
     }
   };
   schedule();

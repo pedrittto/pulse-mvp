@@ -1,6 +1,7 @@
 // backend/src/ingest/businesswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
+import { getGovernor } from "./governor.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
@@ -14,6 +15,9 @@ let lastGuids = new Set(); // short-window dedup
 let etag;
 let lastModified;
 let timer = null;
+const GOV = getGovernor();
+const SOURCE = "businesswire";
+const HOST = "businesswire.com";
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 function jitter() {
@@ -85,7 +89,7 @@ export function startBusinessWireIngest() {
         return;
     if (!URL) { console.warn("[ingest:businesswire] missing URL; skipping fetch"); return; }
     console.log("[ingest:businesswire] start");
-    const schedule = () => { timer = setTimeout(tick, jitter()); timer?.unref?.(); };
+    const schedule = (ms) => { timer = setTimeout(tick, typeof ms === 'number' ? ms : jitter()); timer?.unref?.(); };
     const tick = async () => {
         try {
             // Skip this tick if still backing off (and rate-limit skip logs)
@@ -99,22 +103,33 @@ export function startBusinessWireIngest() {
                 return;
             }
             if (DEBUG_INGEST) console.log("[ingest:businesswire] tick");
+            // Governor backoff/budget
+            const backoffMs = GOV.getNextInMs(SOURCE);
+            if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); if (DEBUG_INGEST) console.log('[ingest:businesswire] skip 429/403 backoff, next in', d, 'ms'); return schedule(d); }
+            const tok = GOV.claimHostToken(HOST);
+            if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:businesswire] skip budget wait, next in', d, 'ms'); return schedule(d); }
             const r = await fetchFeed();
             if (!r) { schedule(); return; }
             if (r.status === 304) {
                 if (DEBUG_INGEST) console.log("[ingest:businesswire] not modified");
-                schedule();
+                const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304');
+                schedule(d);
                 return;
             }
             if (r.status !== 200 || !r.text) {
                 console.warn("[ingest:businesswire] error status", r.status);
-                schedule();
+                let outcome = 'HTTP_200';
+                if (r.status === 429) outcome = 'R429';
+                else if (r.status === 403) outcome = 'R403';
+                const d = GOV.nextDelayAfter(SOURCE, outcome);
+                schedule(d);
                 return;
             }
             etag = r.etag || etag;
             lastModified = r.lastModified || lastModified;
             // use the same now computed at the top of this tick
             const items = extractItems(r.text);
+            let anyNew = false;
             for (const it of items) {
                 if (lastGuids.has(it.guid))
                     continue;
@@ -139,17 +154,20 @@ export function startBusinessWireIngest() {
                 recordLatency("businesswire", it.publishedAt, visibleAt);
                 if (it.publishedAt > watermarkPublishedAt)
                     watermarkPublishedAt = it.publishedAt;
+                anyNew = true;
             }
             // bound dedup memory
             if (lastGuids.size > 2000) {
                 lastGuids = new Set(Array.from(lastGuids).slice(-1000));
             }
+            const recency = items.length ? (now - items[0].publishedAt) : undefined;
+            const d = GOV.nextDelayAfter(SOURCE, anyNew ? 'NEW' : 'HTTP_200', { recencyMs: recency });
+            schedule(d);
         }
         catch (e) {
             console.warn("[ingest:businesswire] error", (e && e.message) || e);
         }
         finally {
-            schedule();
         }
     };
     schedule();

@@ -7,6 +7,7 @@ import * as NY  from './nyse_notices.js';
 import * as CME from './cme_notices.js';
 import * as SEC from './sec_press.js';
 import * as FED from './fed_press.js';
+import { getGovernor } from './governor.js';
 
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
@@ -71,13 +72,15 @@ export function startIngests(): void {
 }
 
 export function getIngestDebug() {
+  const gov = getGovernor();
   const adapters = Object.entries(registry).map(([name, mod]) => ({
     name,
     timers: Number(mod.getTimerCount?.() ?? 0),
-    state: mod.getState?.(),
-    nextInMs: typeof mod.nextInMs === 'function' ? mod.nextInMs() : undefined,
+    state: gov.getState(name),
+    nextInMs: gov.getNextInMs(name),
   }));
-  return { started: __ingestStarted, enabled: __enabled.slice(), adapters };
+  const hostBudget = gov.getHostBudgets();
+  return { started: __ingestStarted, enabled: __enabled.slice(), adapters, hostBudget };
 }
 
 

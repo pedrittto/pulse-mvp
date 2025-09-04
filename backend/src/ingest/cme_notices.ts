@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
@@ -10,6 +11,9 @@ const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000;
 const TIMEOUT_MS = 2000; // per-request timeout for CME
+const GOV = getGovernor();
+const SOURCE = "cme_notices";
+const HOST: "cmegroup.com" = "cmegroup.com";
 
 let lastIds = new Set<string>(); // dedupe by absolute notice URL (or canonical id)
 let etag: string | undefined;
@@ -35,6 +39,10 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     if (lastModified) headers["if-modified-since"] = lastModified;
   }
   const t0 = Date.now();
+  const token = GOV.claimHostToken(HOST);
+  if (!token.ok) {
+    return { status: 0 } as any; // caller will handle scheduling based on governor
+  }
   const res = await fetch(FEED_URL, {
     method: "GET",
     headers,
@@ -110,12 +118,22 @@ export function startCmeNoticesIngest(): void {
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
+      const backoffMs = GOV.getNextInMs(SOURCE);
+      if (GOV.getState(SOURCE) === 'BACKOFF') {
+        const delay = Math.max(500, backoffMs);
+        if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429/403 backoff, next in', delay, 'ms');
+        timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+        return;
+      }
       const t0 = Date.now();
       const hub = await httpGet(FEED_URL, true);
       const dt = Date.now() - t0;
-      if (hub.status === 304) { if (DEBUG_INGEST) console.log('[ingest:cme_notices] not modified in', dt, 'ms'); schedule(); return; }
+      if ((hub as any).status === 0) { const w = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); timer = setTimeout(tick, w); (timer as any)?.unref?.(); return; }
+      if (hub.status === 304) { const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] 304 in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] http', hub.status, 'in', dt, 'ms', hub.etag || hub.lastModified || '');
-      if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); schedule(); return; }
+      if (hub.status === 429) { const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status === 403) { const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
 
@@ -155,7 +173,9 @@ export function startCmeNoticesIngest(): void {
     } catch (e) {
       console.warn("[ingest:cme_notices] error", (e as any)?.message || e);
     } finally {
-      schedule();
+      const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      if (DEBUG_INGEST) console.log('[ingest:cme_notices] next in', delay, 'ms');
+      timer = setTimeout(tick, delay); (timer as any)?.unref?.();
     }
   };
   schedule();
