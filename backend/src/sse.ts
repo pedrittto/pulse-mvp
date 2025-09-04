@@ -1,7 +1,13 @@
 ﻿import type { Request, Response } from "express";
-
-const clients = new Map<string, Response>();
+type Client = { res: Response };
+const clients = new Set<Client>();
 let eventsSent = 0;
+
+function writeEvent(res: Response, name: string, data: string) {
+  res.write(`event: ${name}\n`);
+  res.write(`data: ${data}\n\n`);
+}
+
 export function getSSEStats() {
   return {
     enabled: process.env.SSE_ENABLED === "1",
@@ -9,6 +15,14 @@ export function getSSEStats() {
     eventsSent,
   };
 }
+
+// Global heartbeat every 15s (no per-connection intervals)
+setInterval(() => {
+  const ts = Date.now().toString();
+  for (const c of clients) {
+    if (!c.res.writableEnded) { writeEvent(c.res, 'ping', ts); eventsSent++; }
+  }
+}, 15000).unref?.();
 
 export function registerSSE(app: any) {
   // If disabled, expose a fast 503 on the SSE route
@@ -28,25 +42,27 @@ export function registerSSE(app: any) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     (res as any).flushHeaders?.();
-    // Send immediate comment ping to emit first bytes and avoid edge idle timeouts
-    res.write(":\n\n");
 
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
-    clients.set(id, res);
+    // initial hello event (sends first bytes)
+    writeEvent(res, 'hello', JSON.stringify({ ok: true }));
+    eventsSent++;
 
-    // initial event
-    eventsSent++; res.write(`event: hello\ndata: {"id":"${id}"}\n\n`);
+    const client: Client = { res };
+    clients.add(client);
+    console.log(`[sse] client +1 (clients=${clients.size})`);
 
-    // keepalive heartbeat (SSE comment ping) every 15s
-    const keepalive = setInterval(() => {
-      if (!res.writableEnded) { eventsSent++; res.write(`:\n\n`); }
-    }, 15000);
-    (keepalive as any).unref?.();
+    let closed = false;
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clients.delete(client);
+      try { res.end(); } catch {}
+      console.log(`[sse] client -1 (clients=${clients.size})`);
+    };
 
-    req.on("close", () => {
-      clearInterval(keepalive);
-      clients.delete(id);
-    });
+    // Tear down on BOTH sides to cover proxy/idle/aborts
+    ['close','finish','error','aborted'].forEach(ev => (res as any).once(ev, cleanup));
+    ['close','aborted'].forEach(ev => (req as any).once(ev, cleanup));
   });
 
   // debug
@@ -55,18 +71,12 @@ export function registerSSE(app: any) {
   });
 }
 
-
-
 // broadcast to all connected SSE clients
 export function broadcastBreaking(data: any) {
   let delivered = 0;
-  const payload = `event: breaking\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const res of clients.values()) {
-    if (!res.writableEnded) {
-      res.write(payload);
-      eventsSent++;
-      delivered++;
-    }
+  const payload = JSON.stringify(data);
+  for (const c of clients) {
+    if (!c.res.writableEnded) { writeEvent(c.res, 'breaking', payload); eventsSent++; delivered++; }
   }
   return delivered;
 }
