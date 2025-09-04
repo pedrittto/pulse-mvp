@@ -1,7 +1,7 @@
 // backend/src/ingest/businesswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 let BW_BACKOFF_UNTIL = 0; // epoch ms; skip ticks until this time after 403
 let BW_LAST_SKIP_LOG = 0; // epoch ms, rate-limit skip logs

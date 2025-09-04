@@ -1,7 +1,7 @@
 // backend/src/ingest/prnewswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
-import { DEFAULT_URLS } from "../config/rssFeeds";
+import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
 const POLL_MS_BASE = 1200; // ~1.2 s clamp
 const JITTER_MS = 200;
