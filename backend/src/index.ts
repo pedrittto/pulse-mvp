@@ -2,6 +2,7 @@
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
 import { startIngests as startAllIngest } from "./ingest/index.js";
+import { startMemWatch } from "./diagnostics/mem_watch.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -61,6 +62,8 @@ app.get("/_debug/env", (_req, res) => {
   res.json({ allowed: ALLOWED, raw: process.env.CORS_ORIGIN });
 });
 
+console.log("[boot]", { entry: __filename, node: process.version, pid: process.pid });
+console.log("[env] INGEST_SOURCES=", JSON.stringify(process.env.INGEST_SOURCES || ""));
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
 
@@ -175,6 +178,9 @@ if (JOBS_DISABLED) {
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
 });
+
+// lightweight memory guard (requires NODE_OPTIONS=--expose-gc for GC hint)
+startMemWatch();
 
 
 
