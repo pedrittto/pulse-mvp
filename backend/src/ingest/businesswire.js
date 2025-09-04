@@ -112,7 +112,7 @@ export function startBusinessWireIngest() {
             }
             etag = r.etag || etag;
             lastModified = r.lastModified || lastModified;
-            const now = Date.now();
+            // use the same now computed at the top of this tick
             const items = extractItems(r.text);
             for (const it of items) {
                 if (lastGuids.has(it.guid))
