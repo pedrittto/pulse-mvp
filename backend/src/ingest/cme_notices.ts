@@ -9,6 +9,7 @@ const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000;
+const TIMEOUT_MS = 2000; // per-request timeout for CME
 
 let lastIds = new Set<string>(); // dedupe by absolute notice URL (or canonical id)
 let etag: string | undefined;
@@ -33,15 +34,17 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     if (etag) headers["if-none-match"] = etag;
     if (lastModified) headers["if-modified-since"] = lastModified;
   }
+  const t0 = Date.now();
   const res = await fetch(FEED_URL, {
     method: "GET",
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(900),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.status === 304) return { status: 304 };
   const text = await res.text().catch(() => undefined);
+  const dt = Date.now() - t0;
   return {
     status: res.status,
     text,
@@ -107,8 +110,11 @@ export function startCmeNoticesIngest(): void {
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
+      const t0 = Date.now();
       const hub = await httpGet(FEED_URL, true);
-      if (hub.status === 304) { if (DEBUG_INGEST) console.log("[ingest:cme_notices] not modified"); schedule(); return; }
+      const dt = Date.now() - t0;
+      if (hub.status === 304) { if (DEBUG_INGEST) console.log('[ingest:cme_notices] not modified in', dt, 'ms'); schedule(); return; }
+      if (DEBUG_INGEST) console.log('[ingest:cme_notices] http', hub.status, 'in', dt, 'ms', hub.etag || hub.lastModified || '');
       if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); schedule(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
@@ -118,7 +124,10 @@ export function startCmeNoticesIngest(): void {
       for (const href of links) {
         const baseUrl = FEED_URL;
         const url = new URL(href, baseUrl).toString();
+        const p0 = Date.now();
         const page = await httpGet(url);
+        const pd = Date.now() - p0;
+        if (DEBUG_INGEST) console.log('[ingest:cme_notices] page http', page.status, 'in', pd, 'ms');
         if (page.status !== 200 || !page.text) continue;
         const meta = parseNoticePage(page.text, page.headers);
         if (!meta) continue;

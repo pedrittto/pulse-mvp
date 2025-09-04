@@ -10,6 +10,7 @@ const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
+const TIMEOUT_MS = 1500; // per-request timeout for NASDAQ
 
 let lastIds = new Set<string>();
 let etag: string | undefined;
@@ -32,7 +33,7 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(900),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
@@ -143,8 +144,11 @@ export function startNasdaqHaltsIngest() {
   const tick = async () => {
     try {
       if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] tick");
+      const t0 = Date.now();
       const r = await fetchFeed();
-      if (r.status === 304) { if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] not modified"); schedule(); return; }
+      const dt = Date.now() - t0;
+      if (r.status === 304) { if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] not modified in', dt, 'ms'); schedule(); return; }
+      if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] http', r.status, 'in', dt, 'ms', r.etag || r.lastModified || '');
       if (r.status !== 200) { console.warn("[ingest:nasdaq_halts] error status", r.status); schedule(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -185,6 +189,9 @@ export function startNasdaqHaltsIngest() {
         lastIds = new Set(Array.from(lastIds).slice(-2500));
       }
     } catch (e) {
+      if (DEBUG_INGEST && ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)))) {
+        console.log('[ingest:nasdaq_halts] timeout', TIMEOUT_MS, 'ms');
+      }
       console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
     } finally {
       schedule();
