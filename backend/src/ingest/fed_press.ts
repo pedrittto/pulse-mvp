@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
@@ -19,6 +20,11 @@ let watermarkPublishedAt = 0;
 const GOV = getGovernor();
 const SOURCE = "fed_press";
 const HOST: "sec.gov" = "sec.gov"; // many FED endpoints are served via gov domains; adjust if needed
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));

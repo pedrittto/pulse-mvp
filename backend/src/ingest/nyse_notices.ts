@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 
 const URL = process.env.NYSE_NOTICES_URL ?? DEFAULT_URLS.NYSE_NOTICES_URL; // HTML/RSS/JSON
@@ -15,6 +16,11 @@ let lastIds = new Set<string>();
 let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 const GOV = getGovernor();
 const SOURCE = "nyse_notices";
 const HOST: "nyse.com" = "nyse.com";
@@ -39,6 +45,8 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
   });
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
+  const cl = Number(res.headers.get("content-length") || 0);
+  if (cl && /html|text|xml|json/i.test(ct) && cl > MAX_BYTES_HTML) { respTooLarge++; }
   const common = {
     status: res.status,
     etag: res.headers.get("etag") ?? undefined,
@@ -116,6 +124,8 @@ export function startNyseNoticesIngest() {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      if (inFlight) { deferred = true; overlapsPrevented++; return; }
+      inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:nyse_notices] tick");
       const backoffMs = GOV.getNextInMs(SOURCE);
       if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip 429/403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
@@ -167,6 +177,8 @@ export function startNyseNoticesIngest() {
     } catch (e) {
       console.warn("[ingest:nyse_notices] error", (e as any)?.message || e);
     } finally {
+      inFlight = false;
+      if (deferred) { deferred = false; setImmediate(tick); return; }
     }
   };
   schedule();

@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { getGovernor } from "./governor.js";
+import { pickAgent } from "./http_agent.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
@@ -11,6 +12,7 @@ let BW_LAST_SKIP_LOG = 0; // epoch ms, rate-limit skip logs
 const POLL_MS_BASE = 1200; // ~1.2s base clamp
 const JITTER_MS = 200; // ± jitter
 const FRESH_MS = 5 * 60 * 1000; // accept items newer than 5 min
+const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
 let lastGuids = new Set(); // short-window dedup
 let etag;
 let lastModified;
@@ -18,6 +20,10 @@ let timer = null;
 const GOV = getGovernor();
 const SOURCE = "businesswire";
 const HOST = "businesswire.com";
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 function jitter() {
@@ -63,6 +69,7 @@ async function fetchFeed() {
         redirect: "follow",
         cache: "no-store",
         signal: ctrl.signal,
+        // agent: pickAgent(URL)
     });
 
     clearTimeout(to);
@@ -76,7 +83,9 @@ async function fetchFeed() {
 
     if (res.status === 304)
         return { status: 304 };
-    const text = await res.text();
+    const cl = Number(res.headers.get("content-length") || 0);
+    if (cl && cl > MAX_BYTES_RSS) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+    const text = await readTextWithCap(res, MAX_BYTES_RSS);
     return {
         status: res.status,
         text,
@@ -84,13 +93,35 @@ async function fetchFeed() {
         lastModified: res.headers.get("last-modified") ?? undefined,
     };
 }
+
+async function readTextWithCap(res, cap) {
+    const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+    if (!reader) {
+        const t = await res.text();
+        if (t && t.length * 2 > cap) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+        return t;
+    }
+    const chunks = [];
+    let received = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const n = value?.byteLength ?? value?.length ?? 0;
+        received += n;
+        if (received > cap) { try { reader.cancel(); } catch {} respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+        chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
 export function startBusinessWireIngest() {
     if (timer)
         return;
     if (!URL) { console.warn("[ingest:businesswire] missing URL; skipping fetch"); return; }
     console.log("[ingest:businesswire] start");
-    const schedule = (ms) => { timer = setTimeout(tick, typeof ms === 'number' ? ms : jitter()); timer?.unref?.(); };
+    const schedule = (ms) => { const base = typeof ms === 'number' ? ms : jitter(); const jit = Math.floor(base * 0.15 * (Math.random() - 0.5)); timer = setTimeout(tick, base + jit); timer?.unref?.(); };
     const tick = async () => {
+        if (inFlight) { deferred = true; overlapsPrevented++; return; }
+        inFlight = true;
         try {
             // Skip this tick if still backing off (and rate-limit skip logs)
             const now = Date.now();
@@ -168,6 +199,8 @@ export function startBusinessWireIngest() {
             console.warn("[ingest:businesswire] error", (e && e.message) || e);
         }
         finally {
+            inFlight = false;
+            if (deferred) { deferred = false; setImmediate(tick); return; }
         }
     };
     schedule();

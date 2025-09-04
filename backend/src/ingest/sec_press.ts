@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
@@ -18,6 +19,11 @@ let timer: NodeJS.Timeout | null = null;
 const GOV = getGovernor();
 const SOURCE = "sec_press";
 const HOST: "sec.gov" = "sec.gov";
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0;
 let warnedMissingUrl = false;
 
@@ -104,6 +110,8 @@ export function startSecPressIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      if (inFlight) { deferred = true; overlapsPrevented++; return; }
+      inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:sec_press] tick");
       const backoffMs = GOV.getNextInMs(SOURCE);
       if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429/403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
@@ -152,6 +160,8 @@ export function startSecPressIngest(): void {
     } finally {
       const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
       timer = setTimeout(tick, d); (timer as any)?.unref?.();
+      inFlight = false;
+      if (deferred) { deferred = false; setImmediate(tick); return; }
     }
   };
   schedule();

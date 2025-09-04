@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 
 // Prefer ENV override with safe fallback
@@ -20,6 +21,11 @@ let lastIds = new Set<string>();
 let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
+let inFlight: boolean = false;
+let deferred: boolean = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 
@@ -41,6 +47,8 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
   });
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
+  const cl = Number(res.headers.get("content-length") || 0);
+  if (cl && /html|text|xml|csv|json/i.test(ct) && cl > MAX_BYTES_HTML) { respTooLarge++; }
   const common = {
     status: res.status,
     etag: res.headers.get("etag") ?? undefined,
@@ -147,6 +155,8 @@ export function startNasdaqHaltsIngest() {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      if (inFlight) { deferred = true; overlapsPrevented++; return; }
+      inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] tick");
       // Backoff/state/budget gates
       const backoffMs = GOV.getNextInMs(SOURCE);
@@ -236,6 +246,8 @@ export function startNasdaqHaltsIngest() {
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       return;
     } finally {
+      inFlight = false;
+      if (deferred) { deferred = false; setImmediate(tick); return; }
       // scheduled above in each path
     }
   };

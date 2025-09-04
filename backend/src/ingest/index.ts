@@ -78,6 +78,7 @@ export function getIngestDebug() {
     timers: Number(mod.getTimerCount?.() ?? 0),
     state: gov.getState(name),
     nextInMs: gov.getNextInMs(name),
+    ...(typeof (mod as any).getLimiterStats === 'function' ? (mod as any).getLimiterStats() : {}),
   }));
   const hostBudget = gov.getHostBudgets();
   return { started: __ingestStarted, enabled: __enabled.slice(), adapters, hostBudget };

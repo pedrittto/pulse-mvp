@@ -2,6 +2,7 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
@@ -19,6 +20,11 @@ let lastIds = new Set<string>(); // dedupe by absolute notice URL (or canonical 
 let etag: string | undefined;
 let lastModified: string | undefined;
 let timer: NodeJS.Timeout | null = null;
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 
@@ -51,6 +57,8 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.status === 304) return { status: 304 };
+  const cl = Number(res.headers.get("content-length") || 0);
+  if (cl && cl > MAX_BYTES_HTML) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
   const text = await res.text().catch(() => undefined);
   const dt = Date.now() - t0;
   return {
@@ -117,6 +125,8 @@ export function startCmeNoticesIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      if (inFlight) { deferred = true; overlapsPrevented++; return; }
+      inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
       const backoffMs = GOV.getNextInMs(SOURCE);
       if (GOV.getState(SOURCE) === 'BACKOFF') {
@@ -176,6 +186,8 @@ export function startCmeNoticesIngest(): void {
       const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] next in', delay, 'ms');
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
+      inFlight = false;
+      if (deferred) { deferred = false; setImmediate(tick); return; }
     }
   };
   schedule();

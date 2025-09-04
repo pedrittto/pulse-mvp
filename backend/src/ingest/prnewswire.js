@@ -1,6 +1,7 @@
 // backend/src/ingest/prnewswire.ts
 import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
+import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
@@ -14,6 +15,11 @@ let timer = null;
 const GOV = getGovernor();
 const SOURCE = "prnewswire";
 const HOST = "prnewswire.com";
+let inFlight = false;
+let deferred = false;
+let overlapsPrevented = 0;
+let respTooLarge = 0;
+const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
@@ -55,7 +61,9 @@ async function fetchFeed() {
     if (DEBUG_INGEST) console.log("[ingest:prnewswire] http", res.status, { etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified") });
     if (res.status === 304)
         return { status: 304 };
-    const text = await res.text();
+    const cl = Number(res.headers.get("content-length") || 0);
+    if (cl && cl > MAX_BYTES_RSS) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+    const text = await readTextWithCap(res, MAX_BYTES_RSS);
     return {
         status: res.status,
         text,
@@ -63,18 +71,41 @@ async function fetchFeed() {
         lastModified: res.headers.get("last-modified") ?? undefined,
     };
 }
+
+async function readTextWithCap(res, cap) {
+    const reader = res.body && typeof res.body.getReader === 'function' ? res.body.getReader() : null;
+    if (!reader) {
+        const t = await res.text();
+        if (t && t.length * 2 > cap) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+        return t;
+    }
+    const chunks = [];
+    let received = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const n = value?.byteLength ?? value?.length ?? 0;
+        received += n;
+        if (received > cap) { try { reader.cancel(); } catch {} respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
+        chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
 export function startPRNewswireIngest() {
     if (timer)
         return;
     console.log("[ingest:prnewswire] start");
     if (!URL) { if (!warnedMissingUrl) { console.warn("[ingest:prnewswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
     const schedule = (ms) => {
-        const nextMs = typeof ms === 'number' ? ms : jitter();
+        const base = typeof ms === 'number' ? ms : jitter();
+        const nextMs = base + Math.floor(base * 0.15 * (Math.random() - 0.5));
         if (DEBUG_INGEST) console.log("[ingest:prnewswire] tick → next in", nextMs, "ms");
         timer = setTimeout(tick, nextMs);
         timer?.unref?.();
     };
     const tick = async () => {
+        if (inFlight) { deferred = true; overlapsPrevented++; return; }
+        inFlight = true;
         try {
             // mark tick start
             // lightweight: single line, no payloads
@@ -141,6 +172,8 @@ export function startPRNewswireIngest() {
             console.warn("[ingest:prnewswire] error", (e && e.message) || e);
         }
         finally {
+            inFlight = false;
+            if (deferred) { deferred = false; setImmediate(tick); return; }
         }
     };
     schedule();
