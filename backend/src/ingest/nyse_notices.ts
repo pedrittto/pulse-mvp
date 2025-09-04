@@ -20,6 +20,7 @@ let warnedMissingUrl = false;
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
 async function fetchFeed(): Promise<{ status: number; text?: string; json?: any; etag?: string; lastModified?: string }> {
   const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
@@ -111,9 +112,9 @@ export function startNyseNoticesIngest() {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      console.log("[ingest:nyse_notices] tick");
+      if (DEBUG_INGEST) console.log("[ingest:nyse_notices] tick");
       const r = await fetchFeed();
-      if (r.status === 304) { console.log("[ingest:nyse_notices] not modified"); schedule(); return; }
+      if (r.status === 304) { if (DEBUG_INGEST) console.log("[ingest:nyse_notices] not modified"); schedule(); return; }
       if (r.status !== 200) { console.warn("[ingest:nyse_notices] error status", r.status); schedule(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -157,9 +158,11 @@ export function startNyseNoticesIngest() {
   schedule();
 }
 
+export function start(): void { return startNyseNoticesIngest(); }
 export function stopNyseNoticesIngest() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+export function getTimerCount(): number { return timer ? 1 : 0; }
 
 
 

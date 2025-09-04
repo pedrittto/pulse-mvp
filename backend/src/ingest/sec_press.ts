@@ -20,6 +20,7 @@ let warnedMissingUrl = false;
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
 type Item = { title: string; url: string; publishedAt: number };
 
@@ -99,9 +100,9 @@ export function startSecPressIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      console.log("[ingest:sec_press] tick");
+      if (DEBUG_INGEST) console.log("[ingest:sec_press] tick");
       const r = await fetchOnce();
-      if (r.status === 304) { console.log("[ingest:sec_press] not modified"); schedule(); return; }
+      if (r.status === 304) { if (DEBUG_INGEST) console.log("[ingest:sec_press] not modified"); schedule(); return; }
       if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); schedule(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -145,9 +146,11 @@ export function startSecPressIngest(): void {
   schedule();
 }
 
+export function start(): void { return startSecPressIngest(); }
 export function stopSecPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+export function getTimerCount(): number { return timer ? 1 : 0; }
 
 
 

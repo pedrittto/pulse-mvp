@@ -3,6 +3,7 @@ import { broadcastBreaking } from "../sse.js";
 import { recordLatency } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 const URL = process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 let BW_BACKOFF_UNTIL = 0; // epoch ms; skip ticks until this time after 403
 let BW_LAST_SKIP_LOG = 0; // epoch ms, rate-limit skip logs
 // Sub-2s lane
@@ -97,11 +98,11 @@ export function startBusinessWireIngest() {
                 schedule();
                 return;
             }
-            console.log("[ingest:businesswire] tick");
+            if (DEBUG_INGEST) console.log("[ingest:businesswire] tick");
             const r = await fetchFeed();
             if (!r) { schedule(); return; }
             if (r.status === 304) {
-                console.log("[ingest:businesswire] not modified");
+                if (DEBUG_INGEST) console.log("[ingest:businesswire] not modified");
                 schedule();
                 return;
             }
@@ -153,9 +154,11 @@ export function startBusinessWireIngest() {
     };
     schedule();
 }
+export function start() { return startBusinessWireIngest(); }
 export function stopBusinessWireIngest() {
     if (timer) {
         clearTimeout(timer);
         timer = null;
     }
 }
+export function getTimerCount() { return timer ? 1 : 0; }

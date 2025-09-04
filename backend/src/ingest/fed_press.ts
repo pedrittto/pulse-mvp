@@ -19,6 +19,7 @@ let watermarkPublishedAt = 0;
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
 type Item = { title: string; url: string; publishedAt: number };
 
@@ -94,6 +95,7 @@ export function startFedPressIngest(): void {
   if (!FEED_URL) { console.warn("[ingest:fed_press] missing URL; skipping fetch"); return; }
   const tick = async () => {
     try {
+      if (DEBUG_INGEST) console.log("[ingest:fed_press] tick");
       const r = await fetchOnce();
       if (r.status === 304) { schedule(); return; }
       if (r.status !== 200 || !r.text) { schedule(); return; }
@@ -139,9 +141,11 @@ export function startFedPressIngest(): void {
   schedule();
 }
 
+export function start(): void { return startFedPressIngest(); }
 export function stopFedPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+export function getTimerCount(): number { return timer ? 1 : 0; }
 
 
 

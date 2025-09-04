@@ -62,7 +62,7 @@ app.get("/_debug/env", (_req, res) => {
   res.json({ allowed: ALLOWED, raw: process.env.CORS_ORIGIN });
 });
 
-console.log("[boot]", { entry: __filename, node: process.version, pid: process.pid });
+console.log("[boot]", { entry: import.meta.url, node: process.version, pid: process.pid });
 console.log("[env] INGEST_SOURCES=", JSON.stringify(process.env.INGEST_SOURCES || ""));
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
@@ -75,6 +75,19 @@ app.post("/_debug/push", express.json(), (req, res) => {
   }
   const sent = broadcastBreaking({ ts: Date.now(), ...req.body });
   return res.json({ ok: true, sent });
+});
+
+// Lightweight debug of ingest state (active adapter names and timer counts)
+app.get("/debug/ingest", (_req, res) => {
+  try {
+    // Best-effort dynamic import from dist at runtime; ignore if missing
+    const mod = require("./ingest/index.js");
+    const getSSE = typeof getSSEStats === 'function' ? getSSEStats() : undefined;
+    const info = typeof mod?.getIngestDebug === 'function' ? mod.getIngestDebug() : { adapters: [], timers: 0 };
+    res.json({ ok: true, adapters: info.adapters, timers: info.timers, sse: getSSE });
+  } catch {
+    res.json({ ok: true, adapters: [], timers: 0 });
+  }
 });
 
 // Metrics summary snapshot (cached)

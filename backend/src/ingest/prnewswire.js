@@ -74,7 +74,7 @@ export function startPRNewswireIngest() {
         try {
             // mark tick start
             // lightweight: single line, no payloads
-            console.log("[ingest:prnewswire] tick");
+            if (DEBUG_INGEST) console.log("[ingest:prnewswire] tick");
             const r = await fetchFeed();
             if (r.status === 304) {
                 if (DEBUG_INGEST) console.log("[ingest:prnewswire] not modified");
@@ -128,9 +128,11 @@ export function startPRNewswireIngest() {
     };
     schedule();
 }
+export function start() { return startPRNewswireIngest(); }
 export function stopPRNewswireIngest() {
     if (timer) {
         clearTimeout(timer);
         timer = null;
     }
 }
+export function getTimerCount() { return timer ? 1 : 0; }

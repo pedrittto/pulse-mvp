@@ -20,6 +20,7 @@ let warnedMissingUrl = false;
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
+const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
 type Notice = { title: string; url: string; publishedAt: number; summary?: string };
 
@@ -105,9 +106,9 @@ export function startCmeNoticesIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      console.log("[ingest:cme_notices] tick");
+      if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
       const hub = await httpGet(FEED_URL, true);
-      if (hub.status === 304) { console.log("[ingest:cme_notices] not modified"); schedule(); return; }
+      if (hub.status === 304) { if (DEBUG_INGEST) console.log("[ingest:cme_notices] not modified"); schedule(); return; }
       if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); schedule(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
@@ -151,9 +152,11 @@ export function startCmeNoticesIngest(): void {
   schedule();
 }
 
+export function start(): void { return startCmeNoticesIngest(); }
 export function stopCmeNoticesIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
+export function getTimerCount(): number { return timer ? 1 : 0; }
 
 
 
