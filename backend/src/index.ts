@@ -1,9 +1,10 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
-import { startIngests as startAllIngest } from "./ingest/index.js";
+import { startIngests } from "./ingest/index.js";
 import { startMemWatch } from "./diagnostics/mem_watch.js";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 
 // Safe fallback: keep v2 shape even if metrics module is missing
@@ -62,7 +63,8 @@ app.get("/_debug/env", (_req, res) => {
   res.json({ allowed: ALLOWED, raw: process.env.CORS_ORIGIN });
 });
 
-console.log("[boot]", { entry: import.meta.url, node: process.version, pid: process.pid });
+const entryPath = fileURLToPath(import.meta.url);
+console.log("[boot]", { entry: entryPath, node: process.version, pid: process.pid });
 console.log("[env] INGEST_SOURCES=", JSON.stringify(process.env.INGEST_SOURCES || ""));
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
@@ -177,19 +179,21 @@ setInterval(() => {
     if (lagMs > 200) console.warn('[loop-lag]', Math.round(lagMs), 'ms');
   });
 }, 1000).unref?.();
-// Start ingests unless disabled (ESM import)
-if (JOBS_DISABLED) {
-  console.log("[sched] DISABLE_JOBS=TRUE → ingest off");
-} else {
-  console.log("[sched] calling startAllIngest()");
-  try {
-    startAllIngest();
-  } catch (e) {
-    console.error("[sched] startAllIngest() failed", (e as any) || e);
-  }
-}
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[boot] backend listening on ${PORT}, DISABLE_JOBS=${DISABLE_JOBS ? "1" : "0"}`);
+
+// Listen first, then start ingest asynchronously
+app.listen(PORT, () => {
+  console.log('[listen] port', PORT);
+  setImmediate(() => {
+    if (String(process.env.DISABLE_JOBS) === '1') {
+      console.warn('[sched] disabled (DISABLE_JOBS=1)');
+      return;
+    }
+    try {
+      startIngests();
+    } catch (e) {
+      console.error('[sched] startIngests threw', e);
+    }
+  });
 });
 
 // lightweight memory guard (requires NODE_OPTIONS=--expose-gc for GC hint)
