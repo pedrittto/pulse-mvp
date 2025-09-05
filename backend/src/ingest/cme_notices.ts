@@ -12,7 +12,7 @@ const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000;
-const TIMEOUT_MS = 2000; // per-request timeout for CME
+const BASE_TIMEOUT_MS = 2000; // per-request base timeout for CME
 const GOV = getGovernor();
 const SOURCE = "cme_notices";
 const HOST: "cmegroup.com" = "cmegroup.com";
@@ -29,10 +29,36 @@ const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 
+// Local soft breaker + clamp escalator (module scope)
+let pausedUntil = 0; // epoch ms
+let consecutiveTimeouts = 0;
+let timeoutWindow: number[] = []; // epoch ms within last 60s
+let currentTimeoutMs = BASE_TIMEOUT_MS;
+
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
+
+function noteTimeoutLike(): void {
+  const now = Date.now();
+  consecutiveTimeouts++;
+  timeoutWindow.push(now);
+  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
+  if (timeoutWindow.length >= 3) {
+    currentTimeoutMs = Math.max(currentTimeoutMs, 1900);
+  }
+  if (consecutiveTimeouts >= 5) {
+    pausedUntil = now + 10 * 60 * 1000;
+    consecutiveTimeouts = 0;
+  }
+}
+
+function noteSuccessLike(): void {
+  consecutiveTimeouts = 0;
+  timeoutWindow = [];
+  currentTimeoutMs = BASE_TIMEOUT_MS;
+}
 
 type Notice = { title: string; url: string; publishedAt: number; summary?: string };
 
@@ -55,7 +81,7 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(currentTimeoutMs),
   });
   if (res.status === 304) return { status: 304 };
   const cl = Number(res.headers.get("content-length") || 0);
@@ -127,6 +153,8 @@ export function startCmeNoticesIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      const now = Date.now();
+      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
@@ -143,8 +171,8 @@ export function startCmeNoticesIngest(): void {
       if ((hub as any).status === 0) { const w = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); timer = setTimeout(tick, w); (timer as any)?.unref?.(); return; }
       if (hub.status === 304) { const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] 304 in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] http', hub.status, 'in', dt, 'ms', hub.etag || hub.lastModified || '');
-      if (hub.status === 429) { const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
-      if (hub.status === 403) { const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status === 429) { noteTimeoutLike(); const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status === 403) { noteTimeoutLike(); const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
@@ -200,6 +228,19 @@ export function stopCmeNoticesIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 export function getTimerCount(): number { return timer ? 1 : 0; }
+
+export function getLimiterStats() {
+  return {
+    inFlight,
+    deferred,
+    overlapsPrevented,
+    respTooLarge,
+    pausedUntil,
+    consecutiveTimeouts,
+    timeoutWindowCount: timeoutWindow.length,
+    currentTimeoutMs,
+  };
+}
 
 
 

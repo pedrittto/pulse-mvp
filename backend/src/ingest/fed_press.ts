@@ -12,6 +12,7 @@ const FEED_URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000;
+const BASE_TIMEOUT_MS = 900;
 
 let lastIds = new Set<string>();
 let etag: string | undefined;
@@ -26,6 +27,12 @@ let deferred = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
 const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
+
+// Local soft breaker + clamp escalator (module scope)
+let pausedUntil = 0; // epoch ms
+let consecutiveTimeouts = 0;
+let timeoutWindow: number[] = []; // last 60s timestamps
+let currentTimeoutMs = BASE_TIMEOUT_MS;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -48,7 +55,7 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(900),
+    signal: AbortSignal.timeout(currentTimeoutMs),
   });
   if (res.status === 304) return { status: 304 };
   let text: string | undefined;
@@ -107,6 +114,8 @@ export function startFedPressIngest(): void {
   if (!FEED_URL) { console.warn("[ingest:fed_press] missing URL; skipping fetch"); return; }
   const tick = async () => {
     try {
+      const now = Date.now();
+      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); schedule(d); return; }
       if (DEBUG_INGEST) console.log("[ingest:fed_press] tick");
       const backoffMs = GOV.getNextInMs(SOURCE);
       if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); schedule(d); return; }
@@ -114,8 +123,8 @@ export function startFedPressIngest(): void {
       if (!tok.ok) { schedule(Math.max(500, tok.waitMs)); return; }
       const r = await fetchOnce();
       if (r.status === 304) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); schedule(d); return; }
-      if (r.status === 429) { const d = GOV.nextDelayAfter(SOURCE, 'R429'); schedule(d); return; }
-      if (r.status === 403) { const d = GOV.nextDelayAfter(SOURCE, 'R403'); schedule(d); return; }
+      if (r.status === 429) { consecutiveTimeouts++; timeoutWindow.push(now); timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000); currentTimeoutMs = timeoutWindow.length >= 3 ? Math.max(currentTimeoutMs, 1800) : currentTimeoutMs; if (consecutiveTimeouts >= 5) { pausedUntil = now + 10 * 60 * 1000; consecutiveTimeouts = 0; } const d = GOV.nextDelayAfter(SOURCE, 'R429'); schedule(d); return; }
+      if (r.status === 403) { consecutiveTimeouts++; timeoutWindow.push(now); timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000); currentTimeoutMs = timeoutWindow.length >= 3 ? Math.max(currentTimeoutMs, 1800) : currentTimeoutMs; if (consecutiveTimeouts >= 5) { pausedUntil = now + 10 * 60 * 1000; consecutiveTimeouts = 0; } const d = GOV.nextDelayAfter(SOURCE, 'R403'); schedule(d); return; }
       if (r.status !== 200 || !r.text) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); schedule(d); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -154,6 +163,10 @@ export function startFedPressIngest(): void {
       // keep hot path quiet
     } finally {
       const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      // success-like: reset window and timeout
+      consecutiveTimeouts = 0;
+      timeoutWindow = [];
+      currentTimeoutMs = BASE_TIMEOUT_MS;
       schedule(d);
     }
   };
@@ -165,6 +178,19 @@ export function stopFedPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 export function getTimerCount(): number { return timer ? 1 : 0; }
+
+export function getLimiterStats() {
+  return {
+    inFlight: false,
+    deferred: deferred,
+    overlapsPrevented,
+    respTooLarge,
+    pausedUntil,
+    consecutiveTimeouts,
+    timeoutWindowCount: timeoutWindow.length,
+    currentTimeoutMs,
+  };
+}
 
 
 

@@ -13,7 +13,7 @@ const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
-const TIMEOUT_MS = 1500; // per-request timeout for NASDAQ
+const BASE_TIMEOUT_MS = 1500; // per-request base timeout for NASDAQ
 const GOV = getGovernor();
 const SOURCE = "nasdaq_halts";
 const HOST: "nasdaqtrader.com" = "nasdaqtrader.com";
@@ -30,10 +30,36 @@ const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 
+// Local soft breaker + clamp escalator (module scope)
+let pausedUntil = 0; // epoch ms
+let consecutiveTimeouts = 0;
+let timeoutWindow: number[] = []; // epoch ms of timeout-like events (last 60s)
+let currentTimeoutMs = BASE_TIMEOUT_MS;
+
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
+
+function noteTimeoutLike(): void {
+  const now = Date.now();
+  consecutiveTimeouts++;
+  timeoutWindow.push(now);
+  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
+  if (timeoutWindow.length >= 3) {
+    currentTimeoutMs = Math.max(currentTimeoutMs, 1900);
+  }
+  if (consecutiveTimeouts >= 5) {
+    pausedUntil = now + 10 * 60 * 1000;
+    consecutiveTimeouts = 0;
+  }
+}
+
+function noteSuccessLike(): void {
+  consecutiveTimeouts = 0;
+  timeoutWindow = [];
+  currentTimeoutMs = BASE_TIMEOUT_MS;
+}
 
 async function fetchFeed(): Promise<{ status: number; text?: string; json?: any; etag?: string; lastModified?: string }> {
   const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
@@ -44,7 +70,7 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(currentTimeoutMs),
   });
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
@@ -159,6 +185,8 @@ export function startNasdaqHaltsIngest() {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      const now = Date.now();
+      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] tick");
@@ -188,12 +216,14 @@ export function startNasdaqHaltsIngest() {
       }
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] http', r.status, 'in', dt, 'ms', r.etag || r.lastModified || '');
       if (r.status === 429) {
+        noteTimeoutLike();
         const delay = GOV.nextDelayAfter(SOURCE, 'R429');
         if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 429 backoff in', dt, 'ms, next in', delay, 'ms');
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
         return;
       }
       if (r.status === 403) {
+        noteTimeoutLike();
         const delay = GOV.nextDelayAfter(SOURCE, 'R403');
         if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 403 backoff in', dt, 'ms, next in', delay, 'ms');
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
@@ -240,11 +270,13 @@ export function startNasdaqHaltsIngest() {
       }
       const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: records.length ? (now - records[0].halt_time) : undefined });
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, next in', delay, 'ms');
+      noteSuccessLike();
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       return;
     } catch (e) {
       const isTo = ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)));
       if (DEBUG_INGEST && isTo) { console.log('[ingest:nasdaq_halts] timeout', TIMEOUT_MS, 'ms'); }
+      if (isTo) noteTimeoutLike();
       const delay = GOV.nextDelayAfter(SOURCE, isTo ? 'TIMEOUT' : 'HTTP_200');
       console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
@@ -263,6 +295,19 @@ export function stopNasdaqHaltsIngest() {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 export function getTimerCount(): number { return timer ? 1 : 0; }
+
+export function getLimiterStats() {
+  return {
+    inFlight,
+    deferred,
+    overlapsPrevented,
+    respTooLarge,
+    pausedUntil,
+    consecutiveTimeouts,
+    timeoutWindowCount: timeoutWindow.length,
+    currentTimeoutMs,
+  };
+}
 
 
 

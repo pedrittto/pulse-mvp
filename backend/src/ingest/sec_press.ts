@@ -12,6 +12,7 @@ const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 const POLL_MS_BASE = 1200;
 const JITTER_MS = 200;
 const FRESH_MS = 5 * 60 * 1000;
+const BASE_TIMEOUT_MS = 900;
 
 let lastIds = new Set<string>();
 let etag: string | undefined;
@@ -28,10 +29,36 @@ const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0;
 let warnedMissingUrl = false;
 
+// Local soft breaker + clamp escalator (module scope)
+let pausedUntil = 0; // epoch ms
+let consecutiveTimeouts = 0;
+let timeoutWindow: number[] = []; // epoch ms (last 60s)
+let currentTimeoutMs = BASE_TIMEOUT_MS;
+
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
+
+function noteTimeoutLike(): void {
+  const now = Date.now();
+  consecutiveTimeouts++;
+  timeoutWindow.push(now);
+  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
+  if (timeoutWindow.length >= 3) {
+    currentTimeoutMs = Math.max(currentTimeoutMs, 1800);
+  }
+  if (consecutiveTimeouts >= 5) {
+    pausedUntil = now + 10 * 60 * 1000;
+    consecutiveTimeouts = 0;
+  }
+}
+
+function noteSuccessLike(): void {
+  consecutiveTimeouts = 0;
+  timeoutWindow = [];
+  currentTimeoutMs = BASE_TIMEOUT_MS;
+}
 
 type Item = { title: string; url: string; publishedAt: number };
 
@@ -49,7 +76,7 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(900),
+    signal: AbortSignal.timeout(currentTimeoutMs),
   });
   if (res.status === 304) return { status: 304 };
   let text: string | undefined;
@@ -112,6 +139,8 @@ export function startSecPressIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
+      const now = Date.now();
+      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:sec_press] tick");
@@ -121,8 +150,8 @@ export function startSecPressIngest(): void {
       if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip budget wait, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       const r = await fetchOnce();
       if (r.status === 304) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log("[ingest:sec_press] 304, next in", d, "ms"); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
-      if (r.status === 429) { const d = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
-      if (r.status === 403) { const d = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 429) { noteTimeoutLike(); const d = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 403) { noteTimeoutLike(); const d = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -135,13 +164,13 @@ export function startSecPressIngest(): void {
         items = parseHTML(r.text, FEED_URL!);
       }
 
-      const now = Date.now();
+      const now2 = Date.now();
       for (const it of items) {
-        const publishedAt = it.publishedAt || now;
+        const publishedAt = it.publishedAt || now2;
         const canonicalId = `sec_press:${it.url}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
-        if (publishedAt < now - FRESH_MS) continue;
+        if (publishedAt < now2 - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
         const visibleAt = Date.now();
@@ -161,6 +190,7 @@ export function startSecPressIngest(): void {
       console.warn("[ingest:sec_press] error", (e as any)?.message || e);
     } finally {
       const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      noteSuccessLike();
       timer = setTimeout(tick, d); (timer as any)?.unref?.();
       inFlight = false;
       if (deferred) { deferred = false; setImmediate(tick); return; }
@@ -174,6 +204,19 @@ export function stopSecPressIngest(): void {
   if (timer) { clearTimeout(timer); timer = null; }
 }
 export function getTimerCount(): number { return timer ? 1 : 0; }
+
+export function getLimiterStats() {
+  return {
+    inFlight,
+    deferred,
+    overlapsPrevented,
+    respTooLarge,
+    pausedUntil,
+    consecutiveTimeouts,
+    timeoutWindowCount: timeoutWindow.length,
+    currentTimeoutMs,
+  };
+}
 
 
 

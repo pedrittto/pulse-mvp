@@ -91,6 +91,15 @@ app.get('/debug/ingest', (_req, res) => {
             timers: Number(a?.timers ?? 0),
             state: (a as any)?.state ?? undefined,
             nextInMs: (typeof (a as any)?.nextInMs === 'number') ? (a as any).nextInMs : undefined,
+            // passthrough limiter stats when available
+            inFlight: (a as any)?.inFlight,
+            deferred: (a as any)?.deferred,
+            overlapsPrevented: (a as any)?.overlapsPrevented,
+            respTooLarge: (a as any)?.respTooLarge,
+            pausedUntil: (a as any)?.pausedUntil,
+            consecutiveTimeouts: (a as any)?.consecutiveTimeouts,
+            timeoutWindowCount: (a as any)?.timeoutWindowCount,
+            currentTimeoutMs: (a as any)?.currentTimeoutMs,
           }))
         : []
     };
