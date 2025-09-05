@@ -36,6 +36,10 @@ const ALLOWED = (process.env.CORS_ORIGIN ?? "")
 app.get('/health', (_req, res) => res.status(200).type('text/plain').send('ok'));
 app.head('/health', (_req, res) => res.status(200).end());
 
+// Root probe for platforms expecting GET /
+app.get('/', (_req, res) => res.status(200).type('text/plain').send('ok'));
+app.head('/', (_req, res) => res.status(200).end());
+
 app.use(cors({
   origin(origin, cb) {
     if (!origin) return cb(null, true);
