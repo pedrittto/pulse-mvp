@@ -22,10 +22,9 @@ try {
 }
 
 const app = express();
-const JOBS_DISABLED = /^(1|true)$/i.test(process.env.DISABLE_JOBS ?? "");
+const JOBS_DISABLED = ['1','true','yes'].includes((process.env.DISABLE_JOBS ?? '').toLowerCase());
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const PORT = Number(process.env.PORT || 4000);
-const DISABLE_JOBS = process.env.DISABLE_JOBS === "1";
 
 // Build allow-list from env
 const ALLOWED = (process.env.CORS_ORIGIN ?? "")
@@ -204,17 +203,18 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 app.listen(PORT, () => {
   console.log('[listen] port', PORT);
   setImmediate(() => {
-    if (String(process.env.DISABLE_JOBS) === '1') {
-      console.warn('[sched] disabled (DISABLE_JOBS=1)');
-      return;
-    }
+    console.log(`[sched] ${JOBS_DISABLED ? 'disabled' : 'enabled'} (DISABLE_JOBS=${process.env.DISABLE_JOBS ?? '<unset>'})`);
     try {
-      // Phase 1: Start what ENV specified (RSS expected)
-      startIngests();
-      // Phase 2: staged enables (idempotent, no ENV mutation)
-      setTimeout(() => { try { enableAdapter('nyse_notices'); } catch {} }, 120_000).unref?.();
-      setTimeout(() => { try { enableAdapter('cme_notices'); } catch {} }, 180_000).unref?.();
-      setTimeout(() => { try { enableAdapter('nasdaq_halts'); } catch {} }, 240_000).unref?.();
+      if (!JOBS_DISABLED) {
+        // Phase 1: Start what ENV specified (RSS expected)
+        startIngests();
+        // Phase 2: staged enables (idempotent, no ENV mutation)
+        setTimeout(() => { try { enableAdapter('nyse_notices'); } catch {} }, 120_000).unref?.();
+        setTimeout(() => { try { enableAdapter('cme_notices'); } catch {} }, 180_000).unref?.();
+        setTimeout(() => { try { enableAdapter('nasdaq_halts'); } catch {} }, 240_000).unref?.();
+      } else {
+        // leave ingest off; nothing else to do
+      }
     } catch (e) {
       console.error('[sched] startIngests threw', e);
     }
