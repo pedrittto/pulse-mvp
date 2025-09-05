@@ -22,6 +22,15 @@ try {
 }
 
 const app = express();
+const __bootTs = Date.now();
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    if (Date.now() - __bootTs < 30000) {
+      console.log('[probe]', req.method, req.url, '→', res.statusCode);
+    }
+  });
+  next();
+});
 const JOBS_DISABLED = ['1','true','yes'].includes((process.env.DISABLE_JOBS ?? '').toLowerCase());
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const PORT = Number(process.env.PORT || 4000);
