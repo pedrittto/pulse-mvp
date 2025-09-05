@@ -225,6 +225,14 @@ app.listen(PORT, () => {
   });
 });
 
+// Runtime diagnostics: capture termination and error signals for root-cause analysis
+process.on('SIGTERM', () => console.error('[proc] SIGTERM'));
+process.on('SIGINT',  () => console.error('[proc] SIGINT'));
+process.on('beforeExit', (code) => console.error('[proc] beforeExit', code));
+process.on('exit',      (code) => console.error('[proc] exit', code));
+process.on('uncaughtException', (err) => console.error('[proc] uncaughtException', (err as any)?.stack || String(err)));
+process.on('unhandledRejection', (r) => console.error('[proc] unhandledRejection', r as any));
+
 // mem-watch removed from runtime
 
 
