@@ -8,9 +8,9 @@ import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
-// Match fast-lane clamps used by BW/PRN/Nasdaq
-const POLL_MS_BASE = 1200;
-const JITTER_MS = 200;
+// HTML clamp base ~2300ms ±15% (CME HTML)
+const POLL_MS_BASE = 2300;
+const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
 const FRESH_MS = 5 * 60 * 1000;
 const BASE_TIMEOUT_MS = 2000; // per-request base timeout for CME
 const GOV = getGovernor();
@@ -28,37 +28,12 @@ let respTooLarge = 0;
 const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
-
-// Local soft breaker + clamp escalator (module scope)
-let pausedUntil = 0; // epoch ms
-let consecutiveTimeouts = 0;
-let timeoutWindow: number[] = []; // epoch ms within last 60s
-let currentTimeoutMs = BASE_TIMEOUT_MS;
+let noChangeStreak = 0;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
-
-function noteTimeoutLike(): void {
-  const now = Date.now();
-  consecutiveTimeouts++;
-  timeoutWindow.push(now);
-  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
-  if (timeoutWindow.length >= 3) {
-    currentTimeoutMs = Math.max(currentTimeoutMs, 1900);
-  }
-  if (consecutiveTimeouts >= 5) {
-    pausedUntil = now + 10 * 60 * 1000;
-    consecutiveTimeouts = 0;
-  }
-}
-
-function noteSuccessLike(): void {
-  consecutiveTimeouts = 0;
-  timeoutWindow = [];
-  currentTimeoutMs = BASE_TIMEOUT_MS;
-}
 
 type Notice = { title: string; url: string; publishedAt: number; summary?: string };
 
@@ -66,7 +41,12 @@ function stripTags(s: string): string { return s.replace(/<[^>]*>/g, ""); }
 function decodeHtml(s: string): string { return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'"); }
 
 async function httpGet(FEED_URL: string, conditional = false): Promise<{ status: number; text?: string; etag?: string; lastModified?: string; headers?: Headers }>{
-  const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
+  const headers: Record<string, string> = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.7",
+    "user-agent": "PulseNewsBot/1.0 (+contact: ops@pulsenewsai.com)",
+    "cache-control": "no-cache",
+  };
   if (conditional) {
     if (etag) headers["if-none-match"] = etag;
     if (lastModified) headers["if-modified-since"] = lastModified;
@@ -81,7 +61,7 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(currentTimeoutMs),
+    signal: AbortSignal.timeout(2000),
   });
   if (res.status === 304) return { status: 304 };
   const cl = Number(res.headers.get("content-length") || 0);
@@ -153,8 +133,6 @@ export function startCmeNoticesIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      const now = Date.now();
-      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:cme_notices] tick");
@@ -168,11 +146,11 @@ export function startCmeNoticesIngest(): void {
       const t0 = Date.now();
       const hub = await httpGet(FEED_URL, true);
       const dt = Date.now() - t0;
-      if ((hub as any).status === 0) { const w = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); timer = setTimeout(tick, w); (timer as any)?.unref?.(); return; }
-      if (hub.status === 304) { const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] 304 in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if ((hub as any).status === 0) { const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (hub.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const delay = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:cme_notices] 304 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] http', hub.status, 'in', dt, 'ms', hub.etag || hub.lastModified || '');
-      if (hub.status === 429) { noteTimeoutLike(); const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
-      if (hub.status === 403) { noteTimeoutLike(); const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status === 429) { const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status === 403) { const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
@@ -213,8 +191,9 @@ export function startCmeNoticesIngest(): void {
     } catch (e) {
       console.warn("[ingest:cme_notices] error", (e as any)?.message || e);
     } finally {
-      const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
-      if (DEBUG_INGEST) console.log('[ingest:cme_notices] next in', delay, 'ms');
+      const baseDelay = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      const delay = noChangeStreak >= 3 ? 15000 : baseDelay;
+      if (DEBUG_INGEST) console.log('[ingest:cme_notices] next in', delay, 'ms', 'streak', noChangeStreak, 'base', baseDelay);
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       inFlight = false;
       if (deferred) { deferred = false; setImmediate(tick); return; }
@@ -230,16 +209,7 @@ export function stopCmeNoticesIngest(): void {
 export function getTimerCount(): number { return timer ? 1 : 0; }
 
 export function getLimiterStats() {
-  return {
-    inFlight,
-    deferred,
-    overlapsPrevented,
-    respTooLarge,
-    pausedUntil,
-    consecutiveTimeouts,
-    timeoutWindowCount: timeoutWindow.length,
-    currentTimeoutMs,
-  };
+  return { inFlight, deferred, overlapsPrevented, respTooLarge } as any;
 }
 
 

@@ -9,11 +9,11 @@ import { getGovernor } from "./governor.js";
 // Prefer ENV override with safe fallback
 const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
 
-// Match fast-lane clamps used by BW/PRN
-const POLL_MS_BASE = 1200;
-const JITTER_MS = 200;
+// HTML clamp base ~2300ms ±15%
+const POLL_MS_BASE = 2300;
+const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
 const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
-const BASE_TIMEOUT_MS = 1500; // per-request base timeout for NASDAQ
+const BASE_TIMEOUT_MS = 2000; // per-request timeout (HTML)
 const GOV = getGovernor();
 const SOURCE = "nasdaq_halts";
 const HOST: "nasdaqtrader.com" = "nasdaqtrader.com";
@@ -29,12 +29,10 @@ let respTooLarge = 0;
 const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
+let noChangeStreak = 0;
 
-// Local soft breaker + clamp escalator (module scope)
-let pausedUntil = 0; // epoch ms
-let consecutiveTimeouts = 0;
-let timeoutWindow: number[] = []; // epoch ms of timeout-like events (last 60s)
-let currentTimeoutMs = BASE_TIMEOUT_MS;
+// no-change decimator state
+let noChangeStreak = 0;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -62,7 +60,12 @@ function noteSuccessLike(): void {
 }
 
 async function fetchFeed(): Promise<{ status: number; text?: string; json?: any; etag?: string; lastModified?: string }> {
-  const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
+  const headers: Record<string, string> = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.7",
+    "user-agent": "PulseNewsBot/1.0 (+contact: ops@pulsenewsai.com)",
+    "cache-control": "no-cache",
+  };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
   const res = await fetch(URL, {
@@ -70,7 +73,7 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(currentTimeoutMs),
+    signal: AbortSignal.timeout(2000),
   });
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
@@ -185,8 +188,6 @@ export function startNasdaqHaltsIngest() {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      const now = Date.now();
-      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:nasdaq_halts] tick");
@@ -209,8 +210,10 @@ export function startNasdaqHaltsIngest() {
       const r = await fetchFeed();
       const dt = Date.now() - t0;
       if (r.status === 304) {
-        const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_304');
-        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 304 in', dt, 'ms, next in', delay, 'ms');
+        noChangeStreak++;
+        const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304');
+        const delay = noChangeStreak >= 3 ? 15000 : base;
+        if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 304 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms');
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
         return;
       }
@@ -268,16 +271,18 @@ export function startNasdaqHaltsIngest() {
       if (lastIds.size > 5000) {
         lastIds = new Set(Array.from(lastIds).slice(-2500));
       }
-      const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: records.length ? (now - records[0].halt_time) : undefined });
-      if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, next in', delay, 'ms');
-      noteSuccessLike();
+      if (records.length) { noChangeStreak = 0; } else { noChangeStreak++; }
+      const recency = records.length ? (now - records[0].halt_time) : undefined;
+      const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: recency });
+      const delay = noChangeStreak >= 3 ? 15000 : base;
+      if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms');
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       return;
     } catch (e) {
       const isTo = ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)));
-      if (DEBUG_INGEST && isTo) { console.log('[ingest:nasdaq_halts] timeout', TIMEOUT_MS, 'ms'); }
-      if (isTo) noteTimeoutLike();
-      const delay = GOV.nextDelayAfter(SOURCE, isTo ? 'TIMEOUT' : 'HTTP_200');
+      if (DEBUG_INGEST && isTo) { console.log('[ingest:nasdaq_halts] timeout 2000 ms'); }
+      const base = GOV.nextDelayAfter(SOURCE, isTo ? 'TIMEOUT' : 'HTTP_200');
+      const delay = noChangeStreak >= 3 ? 15000 : base;
       console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       return;
@@ -302,10 +307,6 @@ export function getLimiterStats() {
     deferred,
     overlapsPrevented,
     respTooLarge,
-    pausedUntil,
-    consecutiveTimeouts,
-    timeoutWindowCount: timeoutWindow.length,
-    currentTimeoutMs,
   };
 }
 

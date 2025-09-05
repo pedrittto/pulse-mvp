@@ -17,6 +17,7 @@ type AdapterMod = {
   getTimerCount?: () => number;
   getState?: () => string;
   nextInMs?: () => number;
+  __started?: boolean;
 };
 
 const registry: Record<string, AdapterMod> = {
@@ -61,14 +62,31 @@ export function startIngests(): void {
   __enabled = enabled.slice();
 
   for (const name of enabled) {
-    console.log(`[ingest:${name}] start`);
-    try {
-      registry[name].start();
-    } catch (err) {
-      console.error(`[ingest:${name}] failed to start`, err);
-      process.exit(1);
-    }
+    const jitter = 500 + Math.floor(Math.random() * 4500); // 0.5s–5s staggered boot
+    console.log(`[ingest:${name}] scheduled start in ${jitter}ms`);
+    setTimeout(() => {
+      console.log(`[ingest:${name}] start`);
+      try {
+        (registry[name] as any).__started = true;
+        registry[name].start();
+      } catch (err) {
+        console.error(`[ingest:${name}] failed to start`, err);
+        process.exit(1);
+      }
+    }, jitter).unref?.();
   }
+}
+
+export function enableAdapter(name: string): void {
+  if (!Object.hasOwn(registry, name)) return;
+  const mod = registry[name] as any;
+  if (mod.__started) return;
+  const jitter = 500 + Math.floor(Math.random() * 4500);
+  console.log(`[ingest:${name}] staged enable in ${jitter}ms`);
+  setTimeout(() => {
+    if (mod.__started) return;
+    try { mod.__started = true; mod.start(); } catch (e) { console.error(`[ingest:${name}] enable failed`, e); }
+  }, jitter).unref?.();
 }
 
 export function getIngestDebug() {

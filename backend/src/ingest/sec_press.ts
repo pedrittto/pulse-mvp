@@ -8,9 +8,9 @@ import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 
-// Same clamps/jitter as PRN/BW
-const POLL_MS_BASE = 1200;
-const JITTER_MS = 200;
+// HTML clamp base ~2300ms ±15%
+const POLL_MS_BASE = 2300;
+const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
 const FRESH_MS = 5 * 60 * 1000;
 const BASE_TIMEOUT_MS = 900;
 
@@ -28,6 +28,7 @@ let respTooLarge = 0;
 const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0;
 let warnedMissingUrl = false;
+let noChangeStreak = 0;
 
 // Local soft breaker + clamp escalator (module scope)
 let pausedUntil = 0; // epoch ms
@@ -40,26 +41,6 @@ function jitter(): number {
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
-function noteTimeoutLike(): void {
-  const now = Date.now();
-  consecutiveTimeouts++;
-  timeoutWindow.push(now);
-  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
-  if (timeoutWindow.length >= 3) {
-    currentTimeoutMs = Math.max(currentTimeoutMs, 1800);
-  }
-  if (consecutiveTimeouts >= 5) {
-    pausedUntil = now + 10 * 60 * 1000;
-    consecutiveTimeouts = 0;
-  }
-}
-
-function noteSuccessLike(): void {
-  consecutiveTimeouts = 0;
-  timeoutWindow = [];
-  currentTimeoutMs = BASE_TIMEOUT_MS;
-}
-
 type Item = { title: string; url: string; publishedAt: number };
 
 function stripTags(s: string): string { return s.replace(/<[^>]*>/g, ""); }
@@ -68,7 +49,12 @@ function decodeHtml(s: string): string { return s.replace(/&amp;/g, "&").replace
 function pick(tag: string, s: string): string { const m = s.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i")); return m ? m[1].trim() : ""; }
 
 async function fetchOnce(): Promise<{ status: number; text?: string; etag?: string; lastModified?: string; ct?: string }>{
-  const headers: Record<string,string> = { "user-agent": "pulse-ingest/1.0" };
+  const headers: Record<string,string> = {
+    "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.7",
+    "user-agent": "PulseNewsBot/1.0 (+contact: ops@pulsenewsai.com)",
+    "cache-control": "no-cache",
+  };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
   const res = await fetch(FEED_URL, {
@@ -76,7 +62,7 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(currentTimeoutMs),
+    signal: AbortSignal.timeout(2000),
   });
   if (res.status === 304) return { status: 304 };
   let text: string | undefined;
@@ -139,8 +125,6 @@ export function startSecPressIngest(): void {
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
-      const now = Date.now();
-      if (now < pausedUntil) { const d = Math.max(500, pausedUntil - now); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
       inFlight = true;
       if (DEBUG_INGEST) console.log("[ingest:sec_press] tick");
@@ -149,9 +133,9 @@ export function startSecPressIngest(): void {
       const tok = GOV.claimHostToken(HOST);
       if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip budget wait, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       const r = await fetchOnce();
-      if (r.status === 304) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); if (DEBUG_INGEST) console.log("[ingest:sec_press] 304, next in", d, "ms"); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
-      if (r.status === 429) { noteTimeoutLike(); const d = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
-      if (r.status === 403) { noteTimeoutLike(); const d = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log("[ingest:sec_press] 304, streak", noChangeStreak, 'base', base, "next in", d, "ms"); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 429) { const d = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 403) { const d = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:sec_press] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status !== 200 || !r.text) { console.warn("[ingest:sec_press] error status", r.status); const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
@@ -189,8 +173,8 @@ export function startSecPressIngest(): void {
     } catch (e) {
       console.warn("[ingest:sec_press] error", (e as any)?.message || e);
     } finally {
-      const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
-      noteSuccessLike();
+      const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
+      const d = noChangeStreak >= 3 ? 15000 : base;
       timer = setTimeout(tick, d); (timer as any)?.unref?.();
       inFlight = false;
       if (deferred) { deferred = false; setImmediate(tick); return; }
@@ -206,16 +190,7 @@ export function stopSecPressIngest(): void {
 export function getTimerCount(): number { return timer ? 1 : 0; }
 
 export function getLimiterStats() {
-  return {
-    inFlight,
-    deferred,
-    overlapsPrevented,
-    respTooLarge,
-    pausedUntil,
-    consecutiveTimeouts,
-    timeoutWindowCount: timeoutWindow.length,
-    currentTimeoutMs,
-  };
+  return { inFlight, deferred, overlapsPrevented, respTooLarge } as any;
 }
 
 

@@ -1,7 +1,8 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
-import { startIngests, getIngestDebug } from "./ingest/index.js";
+import './http/transport.js'
+import { startIngests, getIngestDebug, enableAdapter } from "./ingest/index.js";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
@@ -213,7 +214,12 @@ app.listen(PORT, () => {
       return;
     }
     try {
+      // Phase 1: Start what ENV specified (RSS expected)
       startIngests();
+      // Phase 2: staged enables (idempotent, no ENV mutation)
+      setTimeout(() => { try { enableAdapter('nyse_notices'); } catch {} }, 120_000).unref?.();
+      setTimeout(() => { try { enableAdapter('cme_notices'); } catch {} }, 180_000).unref?.();
+      setTimeout(() => { try { enableAdapter('nasdaq_halts'); } catch {} }, 240_000).unref?.();
     } catch (e) {
       console.error('[sched] startIngests threw', e);
     }
