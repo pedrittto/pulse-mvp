@@ -12,7 +12,7 @@ const FEED_URL = process.env.SEC_PRESS_URL ?? DEFAULT_URLS.SEC_PRESS_URL;
 const POLL_MS_BASE = 2300;
 const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
 const FRESH_MS = 5 * 60 * 1000;
-const BASE_TIMEOUT_MS = 900;
+const BASE_TIMEOUT_MS = 2000;
 
 let lastIds = new Set<string>();
 let etag: string | undefined;
@@ -29,12 +29,6 @@ const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
 let watermarkPublishedAt = 0;
 let warnedMissingUrl = false;
 let noChangeStreak = 0;
-
-// Local soft breaker + clamp escalator (module scope)
-let pausedUntil = 0; // epoch ms
-let consecutiveTimeouts = 0;
-let timeoutWindow: number[] = []; // epoch ms (last 60s)
-let currentTimeoutMs = BASE_TIMEOUT_MS;
 
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
@@ -62,7 +56,7 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
     headers,
     redirect: "follow",
     cache: "no-store",
-    signal: AbortSignal.timeout(2000),
+    signal: AbortSignal.timeout(BASE_TIMEOUT_MS),
   });
   if (res.status === 304) return { status: 304 };
   let text: string | undefined;

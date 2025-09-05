@@ -1,7 +1,6 @@
 ﻿import "dotenv/config";import express from "express";
 import cors from "cors";
 import { registerSSE, getSSEStats, broadcastBreaking } from "./sse.js";
-import './http/transport.js'
 import { startIngests, getIngestDebug, enableAdapter } from "./ingest/index.js";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -97,10 +96,6 @@ app.get('/debug/ingest', (_req, res) => {
             deferred: (a as any)?.deferred,
             overlapsPrevented: (a as any)?.overlapsPrevented,
             respTooLarge: (a as any)?.respTooLarge,
-            pausedUntil: (a as any)?.pausedUntil,
-            consecutiveTimeouts: (a as any)?.consecutiveTimeouts,
-            timeoutWindowCount: (a as any)?.timeoutWindowCount,
-            currentTimeoutMs: (a as any)?.currentTimeoutMs,
           }))
         : []
     };

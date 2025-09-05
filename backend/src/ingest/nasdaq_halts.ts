@@ -31,33 +31,10 @@ let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 let noChangeStreak = 0;
 
-// no-change decimator state
-let noChangeStreak = 0;
-
 function jitter(): number {
   return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
-
-function noteTimeoutLike(): void {
-  const now = Date.now();
-  consecutiveTimeouts++;
-  timeoutWindow.push(now);
-  timeoutWindow = timeoutWindow.filter(t => now - t <= 60_000);
-  if (timeoutWindow.length >= 3) {
-    currentTimeoutMs = Math.max(currentTimeoutMs, 1900);
-  }
-  if (consecutiveTimeouts >= 5) {
-    pausedUntil = now + 10 * 60 * 1000;
-    consecutiveTimeouts = 0;
-  }
-}
-
-function noteSuccessLike(): void {
-  consecutiveTimeouts = 0;
-  timeoutWindow = [];
-  currentTimeoutMs = BASE_TIMEOUT_MS;
-}
 
 async function fetchFeed(): Promise<{ status: number; text?: string; json?: any; etag?: string; lastModified?: string }> {
   const headers: Record<string, string> = {
@@ -219,14 +196,12 @@ export function startNasdaqHaltsIngest() {
       }
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] http', r.status, 'in', dt, 'ms', r.etag || r.lastModified || '');
       if (r.status === 429) {
-        noteTimeoutLike();
         const delay = GOV.nextDelayAfter(SOURCE, 'R429');
         if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 429 backoff in', dt, 'ms, next in', delay, 'ms');
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
         return;
       }
       if (r.status === 403) {
-        noteTimeoutLike();
         const delay = GOV.nextDelayAfter(SOURCE, 'R403');
         if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] skip 403 backoff in', dt, 'ms, next in', delay, 'ms');
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
@@ -246,13 +221,13 @@ export function startNasdaqHaltsIngest() {
         records = parseHTML(r.text);
       }
 
-      const now = Date.now();
+      const nowMs = Date.now();
       for (const rec of records) {
         const publishedAt = rec.halt_time;
         const canonicalId = `nasdaq_halts:${rec.symbol}:${new Date(publishedAt).toISOString()}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
-        if (publishedAt < now - FRESH_MS) continue;
+        if (publishedAt < nowMs - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
         const visibleAt = Date.now();
@@ -272,7 +247,7 @@ export function startNasdaqHaltsIngest() {
         lastIds = new Set(Array.from(lastIds).slice(-2500));
       }
       if (records.length) { noChangeStreak = 0; } else { noChangeStreak++; }
-      const recency = records.length ? (now - records[0].halt_time) : undefined;
+      const recency = records.length ? (nowMs - records[0].halt_time) : undefined;
       const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: recency });
       const delay = noChangeStreak >= 3 ? 15000 : base;
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms');
