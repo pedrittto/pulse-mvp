@@ -30,6 +30,13 @@ const registry: Record<string, AdapterMod> = {
   fed_press:    FED as unknown as AdapterMod,
 };
 
+// --- staged boot configuration (no new files) ---
+const LIGHT = new Set(['prnewswire', 'sec_press', 'fed_press']); // RSS/light XML
+const HEAVY = new Set(['nyse_notices', 'cme_notices', 'nasdaq_halts', 'businesswire']); // HTML/WAF-heavy; BW as heavy defensively
+
+// Kill-switch: set STAGED_BOOT_OFF=1 to disable staging and start all from ENV immediately.
+const STAGED_BOOT_OFF = process.env.STAGED_BOOT_OFF === '1';
+
 function parseSources(env?: string): string[] {
   return (env ?? "").split(",").map(s => s.trim()).filter(Boolean);
 }
@@ -38,54 +45,61 @@ let __ingestStarted = false;
 let __enabled: string[] = [];
 
 export function startIngests(): void {
-  if (__ingestStarted) {
-    console.warn('[sched] startIngests called again — ignored');
-    return;
-  }
+  if (__ingestStarted) { return; }
 
-  const wanted = parseSources(process.env.INGEST_SOURCES);
-  const keys = Object.keys(registry);
-  console.log('[registry:keys]', keys.join(','));
+  const enabled = (process.env.INGEST_SOURCES ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter((n) => Object.prototype.hasOwnProperty.call(registry, n));
 
-  if (!wanted.length) {
-    console.error('[boot][FATAL] INGEST_SOURCES is empty or unparsable'); process.exit(1);
+  if (!enabled.length) {
+    console.warn('[boot] INGEST_SOURCES is empty or unparsable — starting without ingest adapters');
+    return; // keep server alive; no adapters started
   }
-  const unknown = wanted.filter(n => Object.hasOwn(registry, n) === false);
-  if (unknown.length) {
-    console.error('[boot][FATAL] Unknown sources in INGEST_SOURCES:', unknown.join(',')); process.exit(1);
-  }
-
-  const enabled = wanted.filter(n => Object.hasOwn(registry, n));
-  console.log('[sched] enabled sources:', enabled.join(', ') || '(none)');
 
   __ingestStarted = true;
   __enabled = enabled.slice();
 
-  for (const name of enabled) {
-    const jitter = 500 + Math.floor(Math.random() * 4500); // 0.5s–5s staggered boot
-    console.log(`[ingest:${name}] scheduled start in ${jitter}ms`);
-    setTimeout(() => {
-      console.log(`[ingest:${name}] start`);
-      try {
-        (registry[name] as any).__started = true;
-        registry[name].start();
-      } catch (err) {
-        console.error(`[ingest:${name}] failed to start`, err);
-        process.exit(1);
-      }
-    }, jitter).unref?.();
+  // If staging is off, start all enabled (legacy behavior with stagger)
+  if (STAGED_BOOT_OFF) {
+    for (const name of enabled) enableAdapter(name);
+    return;
+  }
+
+  // Staging ON: start only LIGHT immediately; defer HEAVY to fixed times
+  const initial = enabled.filter((n) => LIGHT.has(n) || !HEAVY.has(n));
+  const delayed = enabled.filter((n) => HEAVY.has(n));
+
+  // Start initial with staggered jitter 0.5–5s
+  for (const name of initial) enableAdapter(name);
+
+  if (delayed.length > 0) {
+    // Deterministic staging windows for the first three heavy adapters
+    const schedule = [120_000, 180_000, 240_000];
+    delayed.slice(0, schedule.length).forEach((name, i) => {
+      setTimeout(() => enableAdapter(name), schedule[i]).unref?.();
+    });
+    // If more than 3 heavy adapters, add the rest every +60s
+    delayed.slice(schedule.length).forEach((name, k) => {
+      setTimeout(() => enableAdapter(name), 240_000 + (k + 1) * 60_000).unref?.();
+    });
   }
 }
 
 export function enableAdapter(name: string): void {
-  if (!Object.hasOwn(registry, name)) return;
-  const mod = registry[name] as any;
-  if (mod.__started) return;
+  const mod = (registry as any)[name];
+  if (!mod) return;
+  if (mod.__started) return; // idempotent guard
   const jitter = 500 + Math.floor(Math.random() * 4500);
-  console.log(`[ingest:${name}] staged enable in ${jitter}ms`);
   setTimeout(() => {
-    if (mod.__started) return;
-    try { mod.__started = true; mod.start(); } catch (e) { console.error(`[ingest:${name}] enable failed`, e); }
+    try {
+      if (mod.__started) return;
+      mod.__started = true;
+      mod.start(); // must keep single in-flight + timers:1 inside
+    } catch (e) {
+      // keep silent or guard behind DEBUG_INGEST; no heavy logging
+    }
   }, jitter).unref?.();
 }
 
