@@ -2,8 +2,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 
-# Pin pnpm (no corepack)
-RUN npm i -g pnpm@9.5.1
+# Use corepack to pin pnpm from packageManager (pnpm@9.9.0)
+RUN corepack enable && corepack prepare pnpm@9.9.0 --activate
 
 # Cache deps
 COPY pnpm-lock.yaml package.json ./
