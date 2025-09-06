@@ -1,31 +1,40 @@
 # ---------- build stage ----------
-FROM node:22-alpine AS build
+FROM node:22-slim AS builder
 WORKDIR /app
 
-# Pin pnpm (no corepack)
-RUN npm i -g pnpm@9.5.1
+# Enable Corepack and pin pnpm 9 (use the version from package.json)
+RUN corepack enable
 
-# Cache deps
-COPY pnpm-lock.yaml package.json ./
-COPY backend/package.json ./backend/package.json
-RUN pnpm -C backend install --frozen-lockfile
+# Copy full repo (monorepo) for a straightforward workspace install
+COPY . .
 
-# Build TS (tsconfig.json is inside backend/)
-COPY backend ./backend
+# Activate the version from package.json's "packageManager"
+RUN corepack prepare --activate
+
+# Install all workspaces with a frozen lockfile
+RUN pnpm -w install --frozen-lockfile
+
+# Build backend only (tsconfig lives in backend/)
 RUN pnpm -C backend build
 
+# Optionally prune to production deps for backend
+RUN pnpm -C backend install --prod --frozen-lockfile
+
 # ---------- runtime stage ----------
-FROM node:22-alpine AS runtime
-WORKDIR /app
+FROM node:22-slim AS runtime
 ENV NODE_ENV=production
+WORKDIR /app
+
+# Copy only what's needed to run backend
+COPY --from=builder /app/backend/dist ./backend/dist
+COPY --from=builder /app/backend/package.json ./backend/package.json
+COPY --from=builder /app/backend/node_modules ./backend/node_modules
+
+# Fly will forward to this port; keep in sync with fly.toml
 ENV PORT=8080
-
-# Runtime artifacts
-COPY --from=build /app/backend/dist ./dist
-COPY --from=build /app/backend/package.json ./package.json
-COPY --from=build /app/backend/node_modules ./node_modules
-
 EXPOSE 8080
-CMD ["node", "dist/index.js"]
+
+WORKDIR /app/backend
+CMD ["node","dist/index.js"]
 
 

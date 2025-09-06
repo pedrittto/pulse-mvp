@@ -1,6 +1,9 @@
 app = "pulse-mvp"
 primary_region = "ams"
 
+[build]
+  dockerfile = "Dockerfile"
+
 [http_service]
   internal_port = 8080
   force_https = true
@@ -8,12 +11,12 @@ primary_region = "ams"
   auto_start_machines = true
   min_machines_running = 1
 
-[[checks]]
-  type = "http"
-  name = "web"
-  interval = "5s"
-  timeout = "2s"
-  path = "/health"
+  [[http_service.checks]]
+    grace_period = "5s"
+    interval     = "10s"
+    timeout      = "2s"
+    method       = "GET"
+    path         = "/health"
 
 [[vm]]
   cpu_kind = "shared"

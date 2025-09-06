@@ -1,24 +1,12 @@
 {
   "name": "pulse-mvp",
   "private": true,
-  "packageManager": "pnpm@9",
-  "workspaces": [
-    "backend",
-    "frontend"
-  ],
+  "packageManager": "pnpm@9.15.9",
+
   "scripts": {
     "prep": "pnpm -r install",
     "dev:be": "pnpm -C backend dev",
     "dev:fe": "pnpm -C frontend dev",
-    "smoke:be": "pnpm -C backend smoke",
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node --enable-source-maps dist/index.js",
-    "smoke": "node scripts/smoke.mjs"
-  },
-  "type": "module",
-  "devDependencies": {
-    "@types/node": "^24.3.1",
-    "typescript": "^5.9.2"
+    "smoke:be": "pnpm -C backend smoke"
   }
 }
