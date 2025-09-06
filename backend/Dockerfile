@@ -1,8 +1,8 @@
 ﻿# syntax=docker/dockerfile:1
 FROM node:22-alpine AS build
 WORKDIR /app
-# pnpm via corepack
-RUN corepack enable && corepack prepare pnpm@9 --activate
+# pnpm via corepack (use version from root package.json)
+RUN corepack enable && corepack prepare --activate
 # deps
 COPY package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
@@ -16,7 +16,7 @@ RUN pnpm run build \
 
 FROM node:22-alpine AS runtime
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@9 --activate
+RUN corepack enable && corepack prepare --activate
 ENV NODE_ENV=production
 ENV PORT=8080
 # prod deps only (fallback gdy brak locka w backend/)
