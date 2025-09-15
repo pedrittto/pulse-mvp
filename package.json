@@ -7,6 +7,7 @@
     "prep": "pnpm -r install",
     "dev:be": "pnpm -C backend dev",
     "dev:fe": "pnpm -C frontend dev",
-    "smoke:be": "pnpm -C backend smoke"
+    "smoke:be": "pnpm -C backend smoke",
+    "deploy:canary": "node backend/scripts/deploy_canary.mjs"
   }
 }

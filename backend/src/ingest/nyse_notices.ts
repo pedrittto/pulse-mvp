@@ -1,6 +1,6 @@
 // backend/src/ingest/nyse_notices.ts
 import { broadcastBreaking } from "../sse.js";
-import { recordLatency } from "../metrics/latency.js";
+import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
@@ -11,7 +11,11 @@ const URL = process.env.NYSE_NOTICES_URL ?? DEFAULT_URLS.NYSE_NOTICES_URL; // HT
 // HTML clamp base ~2300ms ±15%
 const POLL_MS_BASE = 2300;
 const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
-const FRESH_MS = 5 * 60 * 1000;
+// Fast-Path clamp per PDF: 1–3 s window
+if (process.env.SPEC_V1 === '1') {
+  (globalThis as any).__nyseClamp = true;
+}
+const FRESH_MS = Number(process.env.FRESH_MS || 5 * 60 * 1000);
 const BASE_TIMEOUT_MS = 900;
 
 let lastIds = new Set<string>();
@@ -143,6 +147,7 @@ export function startNyseNoticesIngest() {
       const tok = GOV.claimHostToken(HOST);
       if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip budget wait, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       const r = await fetchFeed();
+      try { (await import('./index.js')).reportTick?.('nyse_notices', { status: (r as any)?.status }); } catch {}
       if (r.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] 304, streak', noChangeStreak, 'base', base, 'next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status === 429) { const base = GOV.nextDelayAfter(SOURCE, 'R429'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status === 403) { const base = GOV.nextDelayAfter(SOURCE, 'R403'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
@@ -176,7 +181,9 @@ export function startNyseNoticesIngest() {
           published_at: publishedAt,
           visible_at: visibleAt,
         });
-        recordLatency("nyse_notices", publishedAt, visibleAt);
+        setTimestampSource('nyse_notices', 'feed');
+        recordPublisherLatency("nyse_notices", publishedAt, visibleAt);
+        recordPipelineLatency("nyse_notices", visibleAt, visibleAt + 1);
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
@@ -209,6 +216,62 @@ export function getLimiterStats() {
     overlapsPrevented,
     respTooLarge,
   };
+}
+
+// Deterministic single-run probe (no publish)
+export async function probeOnce() {
+  const fetch_started_at = Date.now();
+  try {
+    const r = await fetchFeed();
+    const fetch_finished_at = Date.now();
+    if (r.status !== 200 || (!r.text && !r.json)) {
+      return {
+        source: SOURCE,
+        ok: false,
+        http_status: r.status,
+        items_found: 0,
+        latest_item_timestamp: null,
+        fetch_started_at,
+        fetch_finished_at,
+        parse_ms: 0,
+        notes: 'http_error_or_empty',
+      };
+    }
+    const p0 = Date.now();
+    let items: Notice[] = [];
+    if ((r as any).json) items = parseJSON((r as any).json);
+    else if (r.text && /^\s*[{\[]/.test(r.text)) {
+      try { items = parseJSON(JSON.parse(r.text)); } catch {}
+    } else if (r.text) {
+      items = parseRSSorHTML(r.text);
+    }
+    const parse_ms = Date.now() - p0;
+    const latest = items.reduce((m, it) => Math.max(m, it.publishedAt || 0), 0) || null;
+    return {
+      source: SOURCE,
+      ok: true,
+      http_status: 200,
+      items_found: items.length,
+      latest_item_timestamp: latest,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms,
+      notes: items.length ? 'reachable_parsable' : 'reachable_no_items',
+    };
+  } catch (e) {
+    const fetch_finished_at = Date.now();
+    return {
+      source: SOURCE,
+      ok: false,
+      http_status: 0,
+      items_found: 0,
+      latest_item_timestamp: null,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms: 0,
+      notes: 'exception:' + ((e as any)?.message || String(e)),
+    };
+  }
 }
 
 

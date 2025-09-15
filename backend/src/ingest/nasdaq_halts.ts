@@ -1,6 +1,6 @@
 // backend/src/ingest/nasdaq_halts.ts
 import { broadcastBreaking } from "../sse.js";
-import { recordLatency } from "../metrics/latency.js";
+import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { readTextWithCap } from "./read_text_cap.js";
@@ -12,7 +12,7 @@ const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
 // HTML clamp base ~2300ms ±15%
 const POLL_MS_BASE = 2300;
 const JITTER_MS = Math.round(POLL_MS_BASE * 0.15);
-const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
+const FRESH_MS = Number(process.env.FRESH_MS || 5 * 60 * 1000); // accept only items newer than 5 min
 const BASE_TIMEOUT_MS = 2000; // per-request timeout (HTML)
 const GOV = getGovernor();
 const SOURCE = "nasdaq_halts";
@@ -185,6 +185,7 @@ export function startNasdaqHaltsIngest() {
       }
       const t0 = Date.now();
       const r = await fetchFeed();
+      try { (await import('./index.js')).reportTick?.('nasdaq_halts', { status: r?.status }); } catch {}
       const dt = Date.now() - t0;
       if (r.status === 304) {
         noChangeStreak++;
@@ -236,10 +237,12 @@ export function startNasdaqHaltsIngest() {
           source: "nasdaq_halts",
           title: `Nasdaq Trading Halt: ${rec.symbol}${rec.reason ? ` (${rec.reason})` : ""}`,
           url: rec.url || URL || "",
-          published_at: publishedAt,
-          visible_at: visibleAt,
+          published_at_ms: publishedAt,
+          visible_at_ms: visibleAt,
         });
-        recordLatency("nasdaq_halts", publishedAt, visibleAt);
+        setTimestampSource('nasdaq_halts', 'feed');
+        recordPublisherLatency("nasdaq_halts", publishedAt, visibleAt);
+        recordPipelineLatency("nasdaq_halts", visibleAt, visibleAt + 1);
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
 
@@ -283,6 +286,59 @@ export function getLimiterStats() {
     overlapsPrevented,
     respTooLarge,
   };
+}
+
+// Deterministic single-run probe (no publish)
+export async function probeOnce() {
+  const fetch_started_at = Date.now();
+  try {
+    const r = await fetchFeed();
+    const fetch_finished_at = Date.now();
+    if (r.status !== 200 || (!r.text && !r.json)) {
+      return {
+        source: SOURCE,
+        ok: false,
+        http_status: r.status,
+        items_found: 0,
+        latest_item_timestamp: null,
+        fetch_started_at,
+        fetch_finished_at,
+        parse_ms: 0,
+        notes: 'http_error_or_empty',
+      };
+    }
+    const p0 = Date.now();
+    let records: HaltRecord[] = [];
+    if ((r as any).json) records = parseJSON((r as any).json);
+    else if (r.text && /,/.test(r.text)) records = parseCSV(r.text);
+    else if (r.text) records = parseHTML(r.text);
+    const parse_ms = Date.now() - p0;
+    const latest = records.reduce((m, it) => Math.max(m, it.halt_time || 0), 0) || null;
+    return {
+      source: SOURCE,
+      ok: true,
+      http_status: 200,
+      items_found: records.length,
+      latest_item_timestamp: latest,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms,
+      notes: records.length ? 'reachable_parsable' : 'reachable_no_items',
+    };
+  } catch (e) {
+    const fetch_finished_at = Date.now();
+    return {
+      source: SOURCE,
+      ok: false,
+      http_status: 0,
+      items_found: 0,
+      latest_item_timestamp: null,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms: 0,
+      notes: 'exception:' + ((e as any)?.message || String(e)),
+    };
+  }
 }
 
 

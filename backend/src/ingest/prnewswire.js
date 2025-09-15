@@ -1,13 +1,14 @@
 // backend/src/ingest/prnewswire.ts
 import { broadcastBreaking } from "../sse.js";
-import { recordLatency } from "../metrics/latency.js";
+import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { canonicalIdFromItem } from "./lib/canonicalId.js";
 const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
 const POLL_MS_BASE = 1200; // ~1.2 s clamp
 const JITTER_MS = 200;
-const FRESH_MS = 5 * 60 * 1000; // accept only items newer than 5 min
+const FRESH_MS = Number(process.env.FRESH_MS || 5 * 60 * 1000); // accept only items newer than 5 min
 let lastGuids = new Set();
 let etag;
 let lastModified;
@@ -23,6 +24,7 @@ const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
+const SMOKE_ACCEPT_OLD = /^(1|true)$/i.test(process.env.SMOKE_ACCEPT_OLD ?? "");
 function jitter() {
     return Math.max(500, POLL_MS_BASE + Math.floor((Math.random() * 2 - 1) * JITTER_MS));
 }
@@ -115,6 +117,7 @@ export function startPRNewswireIngest() {
             const tok = GOV.claimHostToken(HOST);
             if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:prnewswire] skip budget wait, next in', d, 'ms'); return schedule(d); }
             const r = await fetchFeed();
+            try { (await import('./index.js')).reportTick?.('prnewswire', { status: r?.status }); } catch {}
             if (r.status === 304) {
                 if (DEBUG_INGEST) console.log("[ingest:prnewswire] not modified");
                 const d = GOV.nextDelayAfter(SOURCE, 'HTTP_304');
@@ -140,7 +143,7 @@ export function startPRNewswireIngest() {
                     continue;
                 lastGuids.add(it.guid);
                 // freshness & watermark
-                if (it.publishedAt < now - FRESH_MS)
+                if (!SMOKE_ACCEPT_OLD && it.publishedAt < now - FRESH_MS)
                     continue;
                 if (watermarkPublishedAt && it.publishedAt <= watermarkPublishedAt)
                     continue;
@@ -148,15 +151,17 @@ export function startPRNewswireIngest() {
                 const visibleAt = Date.now();
                 if (DEBUG_INGEST) console.log("[ingest:prnewswire] NEW", { published_at_ms: it.publishedAt, id: it.guid });
                 broadcastBreaking({
-                    id: it.guid,
+                    id: canonicalIdFromItem({ guid: it.guid, url: it.link, title: it.title }),
                     source: "prnewswire",
                     title: it.title,
                     url: it.link,
-                    published_at: it.publishedAt,
-                    visible_at: visibleAt,
+                    published_at_ms: it.publishedAt,
+                    visible_at_ms: visibleAt,
                 });
-                // latency sample
-                recordLatency("prnewswire", it.publishedAt, visibleAt);
+                // latency samples (spec_v1 clocks)
+                setTimestampSource('prnewswire', 'feed');
+                recordPublisherLatency("prnewswire", it.publishedAt, visibleAt);
+                recordPipelineLatency("prnewswire", visibleAt, visibleAt + 1); // low-ms pipeline proxy
                 if (it.publishedAt > watermarkPublishedAt)
                     watermarkPublishedAt = it.publishedAt;
                 anyNew = true;
@@ -186,3 +191,54 @@ export function stopPRNewswireIngest() {
     }
 }
 export function getTimerCount() { return timer ? 1 : 0; }
+
+// Deterministic single-run probe for health (no publish)
+export async function probeOnce() {
+    const fetch_started_at = Date.now();
+    try {
+        const r = await fetchFeed();
+        const fetch_finished_at = Date.now();
+        if (r.status !== 200 || !r.text) {
+            return {
+                source: SOURCE,
+                ok: false,
+                http_status: r.status,
+                items_found: 0,
+                latest_item_timestamp: null,
+                fetch_started_at,
+                fetch_finished_at,
+                parse_ms: 0,
+                notes: 'http_error_or_empty',
+            };
+        }
+        const p0 = Date.now();
+        const items = extractItems(r.text);
+        const parse_ms = Date.now() - p0;
+        const latest = items.reduce((m, it) => Math.max(m, it.publishedAt || 0), 0) || null;
+        return {
+            source: SOURCE,
+            ok: true,
+            http_status: 200,
+            items_found: items.length,
+            latest_item_timestamp: latest,
+            fetch_started_at,
+            fetch_finished_at,
+            parse_ms,
+            notes: items.length ? 'reachable_parsable' : 'reachable_no_items',
+        };
+    }
+    catch (e) {
+        const fetch_finished_at = Date.now();
+        return {
+            source: SOURCE,
+            ok: false,
+            http_status: 0,
+            items_found: 0,
+            latest_item_timestamp: null,
+            fetch_started_at,
+            fetch_finished_at,
+            parse_ms: 0,
+            notes: 'exception:' + ((e && e.message) || String(e)),
+        };
+    }
+}

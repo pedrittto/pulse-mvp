@@ -14,6 +14,9 @@ RUN corepack prepare --activate
 # Install all workspaces with a frozen lockfile
 RUN pnpm -w install --frozen-lockfile
 
+# Ensure backend workspace has its node_modules (dev deps for tsc)
+RUN pnpm -C backend install --frozen-lockfile
+
 # Build backend only (tsconfig lives in backend/)
 RUN pnpm -C backend build
 
@@ -28,13 +31,15 @@ WORKDIR /app
 # Copy only what's needed to run backend
 COPY --from=builder /app/backend/dist ./backend/dist
 COPY --from=builder /app/backend/package.json ./backend/package.json
-COPY --from=builder /app/backend/node_modules ./backend/node_modules
+# Install production deps in runtime without pnpm store symlinks
+RUN mkdir -p ./backend
 
 # Fly will forward to this port; keep in sync with fly.toml
 ENV PORT=8080
 EXPOSE 8080
 
 WORKDIR /app/backend
+RUN npm install --omit=dev --no-audit --no-fund
 CMD ["node","dist/index.js"]
 
 

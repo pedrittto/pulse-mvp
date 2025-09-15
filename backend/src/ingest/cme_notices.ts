@@ -1,6 +1,6 @@
 // backend/src/ingest/cme_notices.ts
 import { broadcastBreaking } from "../sse.js";
-import { recordLatency } from "../metrics/latency.js";
+// excluded (Class C)
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { getGovernor } from "./governor.js";
@@ -175,16 +175,7 @@ export function startCmeNoticesIngest(): void {
         if (publishedAt < now - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
-        const visibleAt = Date.now();
-        broadcastBreaking({
-          id: canonicalId,
-          source: "cme_notices",
-          title: meta.title,
-          url,
-          published_at: publishedAt,
-          visible_at: visibleAt,
-        });
-        recordLatency("cme_notices", publishedAt, visibleAt);
+        // Class C: excluded from MVP
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
@@ -210,6 +201,69 @@ export function getTimerCount(): number { return timer ? 1 : 0; }
 
 export function getLimiterStats() {
   return { inFlight, deferred, overlapsPrevented, respTooLarge } as any;
+}
+
+// Deterministic single-run probe (no publish)
+export async function probeOnce() {
+  const fetch_started_at = Date.now();
+  try {
+    const hub = await httpGet(FEED_URL, true);
+    const fetch_finished_at = Date.now();
+    if (hub.status !== 200 || !hub.text) {
+      return {
+        source: SOURCE,
+        ok: false,
+        http_status: hub.status,
+        items_found: 0,
+        latest_item_timestamp: null,
+        fetch_started_at,
+        fetch_finished_at,
+        parse_ms: 0,
+        notes: 'http_error_or_empty',
+      };
+    }
+    const p0 = Date.now();
+    const links = pickFirstNoticeLinksFromHub(hub.text, FEED_URL, 5);
+    let latest = 0;
+    let items_found = 0;
+    for (const href of links) {
+      try {
+        const url = new URL(href, FEED_URL).toString();
+        const page = await httpGet(url);
+        if (page.status !== 200 || !page.text) continue;
+        const meta = parseNoticePage(page.text, page.headers);
+        if (meta) {
+          items_found++;
+          latest = Math.max(latest, meta.publishedAt || 0);
+        }
+      } catch {}
+    }
+    const parse_ms = Date.now() - p0;
+    return {
+      source: SOURCE,
+      ok: true,
+      http_status: 200,
+      items_found,
+      latest_item_timestamp: latest || null,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms,
+      notes: items_found ? 'reachable_parsable' : 'reachable_no_items',
+    };
+  } catch (e) {
+    const fetch_finished_at = Date.now();
+    return {
+      source: SOURCE,
+      ok: false,
+      http_status: 0,
+      items_found: 0,
+      latest_item_timestamp: null,
+      fetch_started_at,
+      fetch_finished_at,
+      parse_ms: 0,
+      notes: 'exception:' + ((e as any)?.message || String(e)),
+    };
+  }
 }
 
 
