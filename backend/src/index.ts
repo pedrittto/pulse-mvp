@@ -1,27 +1,25 @@
 ﻿import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { createRequire } from "node:module";
 
-// Keep existing boot banner and add cold-shell banner
+// Boot banners for visibility
 console.log('[boot] ingest build OK :: ' + new Date().toISOString());
 console.log('[boot] ingest cold-shell :: ' + new Date().toISOString());
 
-// Global error handlers for early visibility
+// Global error handlers (early visibility)
 process.on('unhandledRejection', (e: any) => console.error('[boot] unhandledRejection', e));
 process.on('uncaughtException',  (e: any) => console.error('[boot] uncaughtException',  e));
-
-const require = createRequire(import.meta.url);
 
 // Minimal Express app and cheap endpoints only
 const app = express();
 app.use(cors());
 
+// Health endpoint
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// Lazy metrics endpoint
 app.get('/metrics-summary', async (_req, res) => {
   try {
-    // Lazy import to avoid top-level cost
     const mod: any = await import('./ingest/telemetry.js');
     const getSummary = (mod as any)?.getMetricsSummary ?? (mod as any)?.default?.getMetricsSummary;
     if (typeof getSummary === 'function') {
