@@ -7,10 +7,13 @@ import { startFastlaneIfEnabled } from './fastlane.js';
 import { warnRateLimited } from './log/logger.js';
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
+// lazy config will be loaded after HTTP bind
 // Boot banner to verify new build on Cloud Run
 console.log('[boot] ingest build OK :: ' + new Date().toISOString());
 const require = createRequire(import.meta.url);
+// Early visibility for unexpected errors
+process.on('unhandledRejection', (err: any) => console.error('[boot] unhandledRejection', err));
+process.on('uncaughtException',  (err: any) => console.error('[boot] uncaughtException', err));
 
 // Safe fallback: keep v2 shape even if metrics module is missing
 let getLatencySummary: () => Record<string, unknown> = () => ({} as Record<string, unknown>);
@@ -60,19 +63,13 @@ if (process.env.BOOT_PROBE_LOGS === '1') {
   });
 }
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
-const PORT = Number(process.env.PORT || 4000);
+// Bind HTTP FIRST so Cloud Run sees PORT alive
+const port = Number(process.env.PORT || 8080);
+const host = '0.0.0.0';
 
-// Central config (hard guardrails)
-const cfg = loadConfig();
-const SHOULD_START_INGEST = cfg.JOBS_ENABLED && cfg.INGEST_SOURCES.length > 0;
-
-// Production fuse: block ingest in Cloud Run unless explicitly allowed
-const isCloudRun = !!process.env.K_SERVICE;
-const PROD_FUSE = process.env.ALLOW_PROD_INGEST === '1';
-if (isCloudRun && SHOULD_START_INGEST && !PROD_FUSE) {
-  console.error('[guard] ingest blocked in Cloud Run: set ALLOW_PROD_INGEST=1 to proceed');
-  process.exit(1);
-}
+// Derive lightweight gates from ENV (no config load at top-level)
+const shouldStartIngest = /^(1|true)$/i.test(process.env.JOBS_ENABLED ?? '')
+  && ((resolveActive?.(process.env.INGEST_SOURCES) || []).length > 0);
 
 // Build allow-list from env
 const ALLOWED = (process.env.CORS_ORIGIN ?? "")
@@ -122,7 +119,9 @@ app.get('/_debug/scheduler', (_req, res) => {
 
 if (DEBUG_INGEST) {
   app.get("/debug/enabled-sources", (_req, res) => {
-    res.json({ sources: cfg.INGEST_SOURCES, jobs_enabled: cfg.JOBS_ENABLED, now: Date.now() });
+    const sources = resolveActive?.(process.env.INGEST_SOURCES) || [];
+    const jobsEnabled = /^(1|true)$/i.test(process.env.JOBS_ENABLED ?? '');
+    res.json({ sources, jobs_enabled: jobsEnabled, now: Date.now() });
   });
 }
 
@@ -136,9 +135,9 @@ console.log("[env] INGEST_SOURCES=", JSON.stringify(process.env.INGEST_SOURCES |
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 if (DEBUG_INGEST) {
   console.log('[BOOT env]', {
-    jobs_enabled: cfg.JOBS_ENABLED,
+    jobs_enabled: /^(1|true)$/i.test(process.env.JOBS_ENABLED ?? ''),
     spec_v1: process.env.SPEC_V1 === '1',
-    ingest_sources: cfg.INGEST_SOURCES,
+    ingest_sources: resolveActive?.(process.env.INGEST_SOURCES) || [],
     cpu_always: process.env.NO_CPU_THROTTLING === '1' || undefined,
     min_instances: process.env.MIN_INSTANCES || undefined,
   });
@@ -180,7 +179,7 @@ app.post('/_debug/ingest/runOnce', express.json(), async (req, res) => {
     ? [q]
     : (Array.isArray(req.body?.sources) && req.body.sources.length)
       ? req.body.sources
-      : cfg.INGEST_SOURCES /* default to configured sources */;
+      : (resolveActive?.(process.env.INGEST_SOURCES) || []) /* default to ENV */;
   const startedAt = Date.now();
   try {
     const tasks = sources.map((s: string) => runProbeOnce(s));
@@ -356,7 +355,7 @@ async function refreshMetricsSnapshot() {
 
 // Only schedule background refresh when ingest is enabled; otherwise compute on-demand per request
 refreshMetricsSnapshot();
-if (SHOULD_START_INGEST) {
+if (shouldStartIngest) {
   setInterval(refreshMetricsSnapshot, SNAPSHOT_INTERVAL_MS).unref?.();
 }
 
@@ -421,7 +420,7 @@ app.get('/metrics-summary', (_req, res) => {
 // --- Event loop lag monitor (diagnostic, edge-triggered with cooldown) ---
 let __lagState: 'ok' | 'hot' = 'ok';
 let __lagLastEmit = 0;
-if (SHOULD_START_INGEST) setInterval(() => {
+if (shouldStartIngest) setInterval(() => {
   const t0 = process.hrtime.bigint();
   setImmediate(() => {
     const lagMs = Number(process.hrtime.bigint() - t0) / 1e6;
@@ -449,38 +448,33 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 });
 
 // Listen first, then start ingest asynchronously
-app.listen(PORT, () => {
-  console.log('[listen] port', PORT);
-  setImmediate(() => {
-    console.log(`[sched] ${SHOULD_START_INGEST ? 'enabled' : 'disabled'} (JOBS_ENABLED=${cfg.JOBS_ENABLED}; INGEST_SOURCES=${cfg.INGEST_SOURCES.length ? 'set' : 'empty'})`);
-    try {
-      if (SHOULD_START_INGEST) {
-        // Start only what ENV specified
-        startIngests();
-        // Canary-only fastlane
-        try { startFastlaneIfEnabled(app); } catch {}
-      } else {
-        // leave ingest off; nothing else to do
-      }
-    } catch (e) {
-      console.error('[sched] startIngests threw', e);
-    }
-  });
-});
+app.listen(port, host, () => {
+  console.log('[boot] http listening', { port, host });
 
-// --- dual-mode: start scheduler if enabled (non-blocking) ---
-const jobsEnabledEnv = (process.env.JOBS_ENABLED || '').trim().toLowerCase();
-const jobsEnabled = jobsEnabledEnv === '1' || jobsEnabledEnv === 'true';
+  // ---- Start scheduler only AFTER HTTP is up ----
+  const jobsEnabledEnv = (process.env.JOBS_ENABLED || '').trim().toLowerCase();
+  const jobsEnabled = jobsEnabledEnv === '1' || jobsEnabledEnv === 'true';
 
-if (jobsEnabled) {
+  const isCloudRun = !!process.env.K_SERVICE;
+  const allowProd = (process.env.ALLOW_PROD_INGEST || '').trim() === '1';
+
+  if (!jobsEnabled) {
+    console.log('[boot] JOBS_ENABLED not set -> HTTP only');
+    return;
+  }
+
+  if (isCloudRun && !allowProd) {
+    console.warn('[guard] ALLOW_PROD_INGEST!=1 on Cloud Run -> HTTP OK, ingest skipped');
+    return; // do NOT exit; keep HTTP alive
+  }
+
   (async () => {
     try {
-      // dynamic import to match transpiled .js in dist
+      // dynamic import to match transpiled .js layout in dist
       const mod: any = await import('./ingest/registry.js');
       const start = (mod as any)?.startIngests ?? (mod as any)?.default?.startIngests;
       if (typeof start === 'function') {
         start();
-        // keep this log minimal; prod LOG_LEVEL=error hides it anyway
         console.log('[boot] startIngests() launched');
       } else {
         console.warn('[boot] startIngests not found on module');
@@ -489,7 +483,9 @@ if (jobsEnabled) {
       console.error('[boot] failed to start ingests', err);
     }
   })();
-}
+});
+
+// (dual-mode scheduler moved into app.listen callback)
 
 // Runtime diagnostics: capture termination and error signals for root-cause analysis
 process.on('SIGTERM', () => console.error('[proc] SIGTERM'));
