@@ -34,7 +34,18 @@ Smoke test (fast):
 Terminal A:
 ```powershell
 cd backend
-$env:DISABLE_JOBS='0'
+ 
+## Cost Safety Invariants
+
+- Default `JOBS_ENABLED=false`. Ingest only runs when `JOBS_ENABLED=1` and `INGEST_SOURCES` is a non-empty list.
+ - Legacy disable flag is not used anywhere.
+- Absolute HTTP timeouts: RSS 0.9–1.5s; HTML ≤2s.
+- Response body caps ≤ 0.8 MB; bodies are not logged.
+- Global backoff on errors ≥30s with jitter; single in-flight per adapter.
+- Default logging: `LOG_LEVEL=error`, `LOG_SAMPLING=0`. WARNs rate-limited ≥60s per key.
+- `/health`, `/metrics-lite`, `/metrics-summary` do not trigger network fetches or schedulers.
+- SSE publishes in-memory only; telemetry remains in-process (no external sinks).
+
 $env:INGEST_SOURCES='businesswire,prnewswire,nasdaq_halts,nyse_notices,cme_notices,sec_press'
 npm run dev
 ```

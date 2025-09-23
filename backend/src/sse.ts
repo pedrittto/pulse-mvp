@@ -41,13 +41,15 @@ export function getSSEStats() {
   };
 }
 
-// Global heartbeat every 15s (no per-connection intervals)
-setInterval(() => {
-  const ts = Date.now().toString();
-  for (const c of clients) {
-    if (!c.res.writableEnded) { writeEvent(c.res, 'ping', ts); eventsSent++; }
-  }
-}, 15000).unref?.();
+// Global heartbeat every 15s only when SSE is enabled
+if (process.env.SSE_ENABLED === "1") {
+  setInterval(() => {
+    const ts = Date.now().toString();
+    for (const c of clients) {
+      if (!c.res.writableEnded) { writeEvent(c.res, 'ping', ts); eventsSent++; }
+    }
+  }, 15000).unref?.();
+}
 
 export function registerSSE(app: any) {
   // If disabled, expose a fast 503 on the SSE route

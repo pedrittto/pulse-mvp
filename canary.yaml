@@ -1,5 +1,4 @@
 ﻿NODE_ENV: "production"
-DISABLE_JOBS: "0"
 DEBUG_INGEST: "1"
 SSE_ENABLED: "1"
 SPEC_V1: "1"

@@ -8,7 +8,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node --enable-source-maps dist/index.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:safe": "node scripts/smoke_safe.mjs",
+    "smoke:gate": "node scripts/smoke_gate.mjs",
+    "smoke:one": "node scripts/smoke_ingest_one.mjs"
   },
   "keywords": [],
   "author": "",

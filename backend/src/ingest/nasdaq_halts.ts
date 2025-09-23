@@ -4,7 +4,9 @@ import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } fro
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
 import { readTextWithCap } from "./read_text_cap.js";
-import { getGovernor } from "./governor.js";
+import { getGovernor, classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 
 // Prefer ENV override with safe fallback
 const URL = process.env.NASDAQ_HALTS_URL ?? DEFAULT_URLS.NASDAQ_HALTS_URL;
@@ -26,7 +28,7 @@ let inFlight: boolean = false;
 let deferred: boolean = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
-const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 800_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 let noChangeStreak = 0;
@@ -161,7 +163,7 @@ function decodeHtml(s: string): string { return s.replace(/&amp;/g, "&").replace
 export function startNasdaqHaltsIngest() {
   if (timer) return;
   console.log("[ingest:nasdaq_halts] start");
-  if (!URL) { console.warn("[ingest:nasdaq_halts] missing URL; skipping fetch"); return; }
+  if (!URL) { const w = warnOncePer('ingest:nasdaq_halts:missing_url', 60_000); w("[ingest:nasdaq_halts] missing URL; skipping fetch"); return; }
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
@@ -208,7 +210,7 @@ export function startNasdaqHaltsIngest() {
         timer = setTimeout(tick, delay); (timer as any)?.unref?.();
         return;
       }
-      if (r.status !== 200) { console.warn("[ingest:nasdaq_halts] error status", r.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (r.status !== 200) { const outcome = classifyOutcome(r?.status); ingestOutcome(SOURCE, outcome); const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000)); w(`[ingest:${SOURCE}] ${outcome} status=${r?.status ?? 'NA'}`); const delay = GOV.nextDelayAfter(SOURCE, outcome); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -251,6 +253,7 @@ export function startNasdaqHaltsIngest() {
       }
       if (records.length) { noChangeStreak = 0; } else { noChangeStreak++; }
       const recency = records.length ? (nowMs - records[0].halt_time) : undefined;
+      ingestOutcome(SOURCE, 'HTTP_200');
       const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: recency });
       const delay = noChangeStreak >= 3 ? 15000 : base;
       if (DEBUG_INGEST) console.log('[ingest:nasdaq_halts] 200 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms');
@@ -259,9 +262,12 @@ export function startNasdaqHaltsIngest() {
     } catch (e) {
       const isTo = ((e as any)?.name === 'TimeoutError' || (e as any)?.name === 'AbortError' || /timeout|aborted/i.test(String((e as any)?.message)));
       if (DEBUG_INGEST && isTo) { console.log('[ingest:nasdaq_halts] timeout 2000 ms'); }
-      const base = GOV.nextDelayAfter(SOURCE, isTo ? 'TIMEOUT' : 'HTTP_200');
+      const classified: any = isTo ? 'TIMEOUT' : classifyOutcome(0, e);
+      ingestOutcome(SOURCE, classified);
+      const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+      if (!isTo) { w(`[ingest:${SOURCE}] error ${(e as any)?.message || e}`); }
+      const base = GOV.nextDelayAfter(SOURCE, classified);
       const delay = noChangeStreak >= 3 ? 15000 : base;
-      console.warn("[ingest:nasdaq_halts] error", (e as any)?.message || e);
       timer = setTimeout(tick, delay); (timer as any)?.unref?.();
       return;
     } finally {

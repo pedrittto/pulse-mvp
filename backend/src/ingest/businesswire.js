@@ -5,6 +5,7 @@ import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } fro
 import { getGovernor } from "./governor.js";
 import { pickAgent } from "./http_agent.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
+import { warnOncePer } from "../log/rateLimit.js";
 const URL = process.env.BUSINESSWIRE_RSS_URL ?? process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 let BW_BACKOFF_UNTIL = 0; // epoch ms; skip ticks until this time after 403
@@ -14,7 +15,7 @@ const POLL_MS_BASE = 8000; // 8s clamp on canary (non-fastlane)
 const JITTER_MS = 200; // ± jitter
 const RECENT_WINDOW_S = Number(process.env.RECENT_WINDOW_S || 120);
 const FRESH_MS = RECENT_WINDOW_S * 1000;
-const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
+const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 800_000);
 let lastGuids = new Set(); // short-window dedup
 let etag;
 let lastModified;
@@ -65,9 +66,9 @@ async function fetchFeed() {
     if (lastModified)
         headers["if-modified-since"] = lastModified;
 
-    // ≤2s timeouts
+    // ≤1.5s timeouts for RSS
     const ctrl = new AbortController();
-    const to = setTimeout(() => ctrl.abort(), 1800);
+    const to = setTimeout(() => ctrl.abort(), 1200);
 
     const res = await fetch(URL, {
         method: "GET",
@@ -83,7 +84,8 @@ async function fetchFeed() {
     // Gentle backoff on WAF 403 to avoid hammering
     if (res.status === 403) {
         BW_BACKOFF_UNTIL = Date.now() + 10 * 60 * 1000; // 10 minutes
-        console.warn('[ingest:businesswire] 403 from BusinessWire — backing off 10m');
+        const w = warnOncePer('ingest:businesswire:403', 60_000);
+        w('[ingest:businesswire] 403 from BusinessWire — backing off 10m');
         return;
     }
 
@@ -122,7 +124,7 @@ async function readTextWithCap(res, cap) {
 export function startBusinessWireIngest() {
     if (timer)
         return;
-    if (!URL) { if (!warnedMissingUrl) { console.warn("[ingest:businesswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
+    if (!URL) { if (!warnedMissingUrl) { const w = warnOncePer('ingest:businesswire:missing_url', 60_000); w("[ingest:businesswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
     console.log("[ingest:businesswire] start");
     try {
         const minClamp = Number(process.env.BW_CLAMP_MS_MIN || 15000);
@@ -137,7 +139,8 @@ export function startBusinessWireIngest() {
             const now = Date.now();
             if (now < BW_BACKOFF_UNTIL) {
                 if (now - BW_LAST_SKIP_LOG > 60_000) {
-                    console.warn("[ingest:businesswire] skip (backoff)", Math.ceil((BW_BACKOFF_UNTIL - now) / 1000), "s left");
+                    const w = warnOncePer('ingest:businesswire:skip_backoff', 60_000);
+                    w("[ingest:businesswire] skip (backoff)", Math.ceil((BW_BACKOFF_UNTIL - now) / 1000), "s left");
                     BW_LAST_SKIP_LOG = now;
                 }
                 // external scheduler will re-arm
@@ -160,7 +163,7 @@ export function startBusinessWireIngest() {
                 return;
             }
             if (r.status !== 200 || !r.text) {
-                console.warn("[ingest:businesswire] error status", r.status);
+                { const w = warnOncePer('ingest:businesswire:error_status', 60_000); w("[ingest:businesswire] error status", r.status); }
                 let outcome = 'HTTP_200';
                 if (r.status === 429) outcome = 'R429';
                 else if (r.status === 403) outcome = 'R403';
@@ -218,7 +221,7 @@ export function startBusinessWireIngest() {
             if (DEBUG_INGEST) console.log(`[sched] tick done source=${SOURCE} status=${r.status} new_items=${newCount}`);
         }
         catch (e) {
-            console.warn("[ingest:businesswire] error", (e && e.message) || e);
+            { const w = warnOncePer('ingest:businesswire:error', 60_000); w("[ingest:businesswire] error", (e && e.message) || e); }
             try { (await import('./index.js')).reportTick?.(SOURCE, { error: e }); } catch {}
         }
         finally {

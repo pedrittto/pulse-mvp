@@ -2,7 +2,7 @@
 // ESM/NodeNext friendly, no timers; uses monotonic time based on nowMs
 
 export type GovState = 'FAST' | 'NORMAL' | 'SLOW' | 'BACKOFF';
-export type Outcome = 'NEW' | 'HTTP_200' | 'HTTP_304' | 'TIMEOUT' | 'R429' | 'R403';
+export type Outcome = 'NEW' | 'HTTP_200' | 'HTTP_304' | 'TIMEOUT' | 'R429' | 'R403' | 'R5XX_OR_NET' | 'R4XX_OTHER';
 
 export interface GovConfig {
   normalMs?: number;
@@ -14,6 +14,7 @@ export interface GovConfig {
   backoff429Ms?: number;
   backoff403Ms?: number;
   jitterPct?: number;
+  backoffFailMs?: number; // applied to generic failures (5xx/network and other 4xx)
 }
 
 export interface HostBudgetCfg {
@@ -39,6 +40,10 @@ type HostBucket = {
 };
 
 function clampMin(v: number, min: number): number { return v < min ? min : v; }
+function parseMs(v: any, d = 30_000): number {
+  const n = Number(v);
+  return Math.max(30_000, Number.isFinite(n) ? n : d);
+}
 function jitter(ms: number, pct: number): number {
   const delta = Math.floor(ms * pct);
   const j = (Math.random() * 2 - 1) * delta;
@@ -57,6 +62,7 @@ const DEFAULT_CFG: Required<GovConfig> = {
   backoff429Ms: 120_000,
   backoff403Ms: 600_000,
   jitterPct: 0.15,
+  backoffFailMs: parseMs(process?.env?.BACKOFF_FAIL_MS, 30_000),
 };
 
 function readEnvFlag(name: string, defOn = true): boolean {
@@ -150,6 +156,9 @@ export function createGovernor(cfg?: Partial<GovConfig>) {
       const next = s.lastR429BackoffMs ? Math.min(s.lastR429BackoffMs * 2, 600_000) : base;
       s.lastR429BackoffMs = next;
       s.backoffUntilMs = Math.max(s.backoffUntilMs, tNow + next);
+    } else if (outcome === 'R5XX_OR_NET' || outcome === 'R4XX_OTHER') {
+      // generic failures: short, configurable backoff
+      s.backoffUntilMs = Math.max(s.backoffUntilMs, tNow + C.backoffFailMs);
     } else if (outcome === 'TIMEOUT') {
       s.timeoutStreak += 1;
       if (s.timeoutStreak >= C.timeoutStreakForSlow) {
@@ -203,7 +212,11 @@ export function createGovernor(cfg?: Partial<GovConfig>) {
     return { ok: false, waitMs: Math.ceil(waitSec * 1000) };
   }
 
-  return { getHostBudgets, claimHostToken, getState, nextDelayAfter, getNextInMs };
+  function getConfig(): { backoffFailMs: number } {
+    return { backoffFailMs: C.backoffFailMs };
+  }
+
+  return { getHostBudgets, claimHostToken, getState, nextDelayAfter, getNextInMs, getConfig };
 }
 
 // Singleton governor with defaults
@@ -211,6 +224,17 @@ let __gov: ReturnType<typeof createGovernor> | null = null;
 export function getGovernor() {
   if (!__gov) __gov = createGovernor({});
   return __gov;
+}
+
+// Lightweight outcome classifier for adapters to use consistently
+export function classifyOutcome(status?: number, err?: any): Outcome {
+  const s = Number(status || 0);
+  if (s === 200) return 'HTTP_200';
+  if (s === 304) return 'HTTP_304';
+  if (s === 429) return 'R429';
+  if (s === 403) return 'R403';
+  if (!s || s >= 500) return 'R5XX_OR_NET';
+  return 'R4XX_OTHER';
 }
 
 

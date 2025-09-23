@@ -11,6 +11,7 @@ import * as GNW from './globenewswire.js';
 import * as SED from './sec_edgar.js';
 import { getGovernor } from './governor.js';
 import { reportTick as reportTickGlobal, getSchedulerSnapshot, onTickStart, onHttp, onSuccess, onFailure } from './telemetry.js';
+import { warnRateLimited } from "../log/logger.js";
 
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 
@@ -132,7 +133,7 @@ async function loadAdapter(name: string): Promise<any | null> {
         return await import('./businesswire.js');
       // future: add more adapters here with dynamic import
       default:
-        if (DEBUG_INGEST) console.warn('[sched] unknown source', name);
+        if (DEBUG_INGEST) warnRateLimited('sched:unknown-source', 60_000)('[sched] unknown source', name);
         return null;
     }
   } catch (e: any) {
@@ -199,11 +200,8 @@ export function startIngests(): void {
   } catch {}
 
   if (!enabled.length) {
-    const fallback = ['prnewswire','sec_press','fed_press'];
-    console.warn('[boot] empty/invalid sources — using SAFE DEFAULT:', fallback.join(','));
-    __ingestStarted = true;
-    __enabled = fallback.slice();
-    for (const name of fallback) enableAdapter(name);
+    // Hard guard: do not start any ingest when sources are empty
+    try { console.log('[boot] no sources configured; ingest disabled'); } catch {}
     return;
   }
 

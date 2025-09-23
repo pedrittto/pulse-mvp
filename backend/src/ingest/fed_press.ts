@@ -3,7 +3,9 @@ import { broadcastBreaking } from "../sse.js";
 import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
-import { getGovernor } from "./governor.js";
+import { getGovernor, classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
@@ -26,7 +28,7 @@ let inFlight = false;
 let deferred = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
-const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 800_000);
 
 let noChangeStreak = 0;
 
@@ -112,7 +114,7 @@ function parseHTML(html: string, base: string): Item[] {
 export function startFedPressIngest(): void {
   if (timer) return;
   const schedule = (ms?: number) => { timer = setTimeout(tick, typeof ms === 'number' ? ms : jitter()); (timer as any)?.unref?.(); };
-  if (!FEED_URL) { console.warn("[ingest:fed_press] missing URL; skipping fetch"); return; }
+  if (!FEED_URL) { const w = warnOncePer('ingest:fed_press:missing_url', 60_000); w("[ingest:fed_press] missing URL; skipping fetch"); return; }
   const tick = async () => {
     try {
       if (inFlight) { deferred = true; overlapsPrevented++; return; }
@@ -123,10 +125,10 @@ export function startFedPressIngest(): void {
       const tok = GOV.claimHostToken(HOST);
       if (!tok.ok) { schedule(Math.max(500, tok.waitMs)); return; }
       const r = await fetchOnce();
-      if (r.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
-      if (r.status === 429) { const base = GOV.nextDelayAfter(SOURCE, 'R429'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
-      if (r.status === 403) { const base = GOV.nextDelayAfter(SOURCE, 'R403'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
-      if (r.status !== 200 || !r.text) { const d = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); schedule(d); return; }
+      if (r.status === 304) { ingestOutcome(SOURCE, 'HTTP_304'); noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
+      if (r.status === 429) { ingestOutcome(SOURCE, 'R429'); const base = GOV.nextDelayAfter(SOURCE, 'R429'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
+      if (r.status === 403) { ingestOutcome(SOURCE, 'R403'); const base = GOV.nextDelayAfter(SOURCE, 'R403'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
+      if (r.status !== 200 || !r.text) { const outcome = classifyOutcome(r?.status); ingestOutcome(SOURCE, outcome); const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000)); w(`[ingest:${SOURCE}] ${outcome} status=${r?.status ?? 'NA'}`); const d = GOV.nextDelayAfter(SOURCE, outcome); schedule(d); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -162,9 +164,13 @@ export function startFedPressIngest(): void {
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
-    } catch {
-      // keep hot path quiet
+    } catch (e) {
+      const outcome = classifyOutcome(0, e);
+      ingestOutcome(SOURCE, outcome);
+      const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+      w(`[ingest:${SOURCE}] error ${(e as any)?.message || e}`);
     } finally {
+      ingestOutcome(SOURCE, 'HTTP_200');
       const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
       const d = noChangeStreak >= 3 ? 15000 : base;
       schedule(d);

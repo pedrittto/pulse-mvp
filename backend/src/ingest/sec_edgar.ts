@@ -7,6 +7,7 @@ import { broadcastBreaking } from "../sse.js";
 import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { pickAgent } from "./http_agent.js";
 import { canonicalIdFromItem } from "./lib/canonicalId.js";
+import { warnOncePer } from "../log/rateLimit.js";
 
 export const id = 'sec_edgar';
 export const name = 'SEC EDGAR';
@@ -75,7 +76,7 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
     const r = await fetchAtom(url, ua);
     if (r.status === 304) return { http_status: 304, new_items: 0 };
     if (r.status !== 200 || !r.text) {
-      if (DEBUG_INGEST) console.warn("[ingest:sec_edgar] error status", r.status);
+      if (DEBUG_INGEST) { try { console.log("[ingest:sec_edgar] error status", r.status); } catch {} }
       return { http_status: r.status || 0, new_items: 0 };
     }
     etag = r.etag || etag;
@@ -108,7 +109,7 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
     if (DEBUG_INGEST) console.log(`[ingest:${id}] 200 items=${entries.length} new=${newCount}`);
     return { http_status: 200, new_items: newCount };
   } catch (e) {
-    if (DEBUG_INGEST) console.warn("[ingest:sec_edgar] error", (e as any)?.message || e);
+    if (DEBUG_INGEST) { try { console.log("[ingest:sec_edgar] error", (e as any)?.message || e); } catch {} }
     return { http_status: 599, new_items: 0 };
   }
 }
@@ -132,7 +133,7 @@ let warnedMissing = false;
 function warnOnceMissingUrl() {
   if (warnedMissing) return;
   warnedMissing = true;
-  try { console.warn("[ingest:sec_edgar] missing URL; set EDGAR_LATEST_ATOM_URL to enable"); } catch {}
+  try { const w = warnOncePer('ingest:sec_edgar:missing_url', 60_000); w("[ingest:sec_edgar] missing URL; set EDGAR_LATEST_ATOM_URL to enable"); } catch {}
 }
 
 function resolveUserAgent(): string {
@@ -143,7 +144,7 @@ let warnedMissingUA = false;
 function warnOnceMissingUA() {
   if (warnedMissingUA) return;
   warnedMissingUA = true;
-  try { console.warn("[ingest:sec_edgar] missing SEC_USER_AGENT; required by SEC Fair Access"); } catch {}
+  try { const w = warnOncePer('ingest:sec_edgar:missing_ua', 60_000); w("[ingest:sec_edgar] missing SEC_USER_AGENT; required by SEC Fair Access"); } catch {}
 }
 
 async function fetchAtom(url: string, ua: string): Promise<{ status: number; text?: string; etag?: string; lastModified?: string }> {

@@ -4,8 +4,12 @@ import { registerSSE, getSSEStats, broadcastBreaking, getRecentBreaking } from "
 import { startIngests, startIngestsOnce, getIngestDebug, enableAdapter, runProbeOnce, listRegisteredSources, resolveActive, getNextDueAt, isRegistered } from "./ingest/index.js";
 import { getSchedulerSnapshot } from './ingest/telemetry.js';
 import { startFastlaneIfEnabled } from './fastlane.js';
+import { warnRateLimited } from './log/logger.js';
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { loadConfig } from "./config.js";
+// Boot banner to verify new build on Cloud Run
+console.log('[boot] ingest build OK :: ' + new Date().toISOString());
 const require = createRequire(import.meta.url);
 
 // Safe fallback: keep v2 shape even if metrics module is missing
@@ -35,25 +39,39 @@ try {
 }
 
 const app = express();
+// Optional fetch instrumentation for smokes (no-op unless enabled)
+let __fetchCount = 0;
+if (process.env.DEBUG_FETCH_STATS === '1') {
+  const origFetch: any = (globalThis as any).fetch;
+  try {
+    (globalThis as any).fetch = async (...a: any[]) => { __fetchCount++; return origFetch(...a); };
+  } catch {}
+  app.get('/_debug/fetch-stats', (_req, res) => res.json({ count: __fetchCount }));
+}
 const __bootTs = Date.now();
-app.use((req, res, next) => {
-  res.on('finish', () => {
-    if (Date.now() - __bootTs < 30000) {
-      console.log('[probe]', req.method, req.url, '→', res.statusCode);
-    }
+if (process.env.BOOT_PROBE_LOGS === '1') {
+  app.use((req, res, next) => {
+    res.on('finish', () => {
+      if (Date.now() - __bootTs < 30000) {
+        console.log('[probe]', req.method, req.url, '→', res.statusCode);
+      }
+    });
+    next();
   });
-  next();
-});
-const JOBS_DISABLED = ['1','true','yes'].includes((process.env.DISABLE_JOBS ?? '').toLowerCase());
+}
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const PORT = Number(process.env.PORT || 4000);
 
-// Ensure scheduler boot happens early and deterministically when jobs are enabled
-if (!JOBS_DISABLED) {
-  try {
-    console.log('[scheduler] started');
-    startIngestsOnce?.();
-  } catch {}
+// Central config (hard guardrails)
+const cfg = loadConfig();
+const SHOULD_START_INGEST = cfg.JOBS_ENABLED && cfg.INGEST_SOURCES.length > 0;
+
+// Production fuse: block ingest in Cloud Run unless explicitly allowed
+const isCloudRun = !!process.env.K_SERVICE;
+const PROD_FUSE = process.env.ALLOW_PROD_INGEST === '1';
+if (isCloudRun && SHOULD_START_INGEST && !PROD_FUSE) {
+  console.error('[guard] ingest blocked in Cloud Run: set ALLOW_PROD_INGEST=1 to proceed');
+  process.exit(1);
 }
 
 // Build allow-list from env
@@ -102,21 +120,9 @@ app.get('/_debug/scheduler', (_req, res) => {
   }
 });
 
-function parseEnvSources(raw?: string): string[] {
-  const ALIASES: Record<string,string> = {
-    'sec-press':'sec_press', 'sec_press':'sec_press',
-    'nyse-notices':'nyse_notices', 'cme-notices':'cme_notices', 'nasdaq-halts':'nasdaq_halts',
-  };
-  const t = raw ?? '';
-  if (!t) return [];
-  try { const j = JSON.parse(t); if (Array.isArray(j)) return j.map(v=>String(v)).map(s=>s.trim()).filter(Boolean).map(s=>ALIASES[s]||s.replace(/-/g,'_')); } catch {}
-  return t.split(',').map(s=>s.trim()).filter(Boolean).map(s=>s.replace(/-/g,'_')).map(s=>ALIASES[s]||s);
-}
-
 if (DEBUG_INGEST) {
-  const sources = parseEnvSources(process.env.INGEST_SOURCES || "businesswire");
   app.get("/debug/enabled-sources", (_req, res) => {
-    res.json({ sources, disable_jobs: JOBS_DISABLED, now: Date.now() });
+    res.json({ sources: cfg.INGEST_SOURCES, jobs_enabled: cfg.JOBS_ENABLED, now: Date.now() });
   });
 }
 
@@ -130,16 +136,15 @@ console.log("[env] INGEST_SOURCES=", JSON.stringify(process.env.INGEST_SOURCES |
 console.log("[env] CORS_ORIGIN allow-list:", ALLOWED);
 if (DEBUG_INGEST) {
   console.log('[BOOT env]', {
-    disable_jobs: JOBS_DISABLED,
+    jobs_enabled: cfg.JOBS_ENABLED,
     spec_v1: process.env.SPEC_V1 === '1',
-    ingest_sources: (process.env.INGEST_SOURCES || '').split(',').map(s=>s.trim()).filter(Boolean),
+    ingest_sources: cfg.INGEST_SOURCES,
     cpu_always: process.env.NO_CPU_THROTTLING === '1' || undefined,
     min_instances: process.env.MIN_INSTANCES || undefined,
   });
-  console.log('[scheduler] started');
-  try { startIngestsOnce?.(); } catch {}
 }
-app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now() }));
+import { getIngestCounts } from './metrics/simpleCounters.js';
+app.get("/metrics-lite", (_req, res) => res.json({ service: "backend", version: "v2", ts: Date.now(), ingest_counts: getIngestCounts() }));
 
 app.post("/_debug/push", express.json(), (req, res) => {
   const key = req.get("x-debug-key");
@@ -175,7 +180,7 @@ app.post('/_debug/ingest/runOnce', express.json(), async (req, res) => {
     ? [q]
     : (Array.isArray(req.body?.sources) && req.body.sources.length)
       ? req.body.sources
-      : parseEnvSources(process.env.INGEST_SOURCES) /* default to configured sources */;
+      : cfg.INGEST_SOURCES /* default to configured sources */;
   const startedAt = Date.now();
   try {
     const tasks = sources.map((s: string) => runProbeOnce(s));
@@ -345,12 +350,15 @@ async function refreshMetricsSnapshot() {
   } catch (e) {
     const age = Date.now() - (metricsSnapshot.generatedAt || 0);
     metricsSnapshot = { ...metricsSnapshot, stale: age > SNAPSHOT_MAX_AGE_MS };
-    console.warn('[metrics] refresh failed:', (e as Error)?.message || e);
+    warnRateLimited('metrics:refresh', Number(process.env.METRICS_WARN_COOLDOWN_MS || 60_000))('[metrics] refresh failed:', (e as Error)?.message || e);
   }
 }
 
+// Only schedule background refresh when ingest is enabled; otherwise compute on-demand per request
 refreshMetricsSnapshot();
-setInterval(refreshMetricsSnapshot, SNAPSHOT_INTERVAL_MS).unref?.();
+if (SHOULD_START_INGEST) {
+  setInterval(refreshMetricsSnapshot, SNAPSHOT_INTERVAL_MS).unref?.();
+}
 
 const SPEC_V1 = process.env.SPEC_V1 === '1';
 
@@ -379,7 +387,7 @@ app.get('/metrics-summary', (_req, res) => {
       return res.status(200).json({ n_total: base.n_total, by_source });
     }
 
-    // Legacy stable summary
+    // Legacy stable summary + governor config snippet
     const raw = (typeof getLatencySummary === 'function' ? getLatencySummary() : {}) as any;
     const per = raw?.per_source || raw?.perSource || raw || {};
     const by_source: Record<string, any> = {};
@@ -392,19 +400,43 @@ app.get('/metrics-summary', (_req, res) => {
       by_source[k] = { samples, p50_ms: p50, p90_ms: p90, last_sample_at: last };
       n_total += samples;
     }
-    res.status(200).json({ n_total, by_source });
+    let backoffFailMs: number | undefined;
+    try { backoffFailMs = (getIngestDebug() as any)?.adapters ? undefined : undefined; } catch {}
+    try {
+      const gov = getIngestDebug && getIngestDebug(); // not ideal to call, but stable
+    } catch {}
+    try {
+      // safer: import governor singleton and read config
+      const { getGovernor } = require('./ingest/governor.js');
+      const gov = getGovernor();
+      backoffFailMs = (gov as any)?.getConfig?.().backoffFailMs ?? undefined;
+    } catch {}
+    res.status(200).json({ n_total, by_source, backoffFailMs });
   } catch (e) {
     console.error('[metrics] summary error', e);
     res.status(200).type('application/json').send(JSON.stringify({ fallback: true, error: String(e) }));
   }
 });
 
-// --- Event loop lag monitor (diagnostic) ---
-setInterval(() => {
+// --- Event loop lag monitor (diagnostic, edge-triggered with cooldown) ---
+let __lagState: 'ok' | 'hot' = 'ok';
+let __lagLastEmit = 0;
+if (SHOULD_START_INGEST) setInterval(() => {
   const t0 = process.hrtime.bigint();
   setImmediate(() => {
     const lagMs = Number(process.hrtime.bigint() - t0) / 1e6;
-    if (lagMs > 200) console.warn('[loop-lag]', Math.round(lagMs), 'ms');
+    const now = Date.now();
+    const cooldown = Number(process.env.LAG_WARN_COOLDOWN_MS || 60_000);
+    if (lagMs > 200) {
+      if (__lagState !== 'hot' || now - __lagLastEmit > cooldown) {
+        warnRateLimited('loop-lag', cooldown)('[loop-lag]', Math.round(lagMs), 'ms');
+        __lagState = 'hot';
+        __lagLastEmit = now;
+      }
+    } else if (__lagState !== 'ok') {
+      warnRateLimited('loop-lag', cooldown)('[loop-lag] recovered');
+      __lagState = 'ok';
+    }
   });
 }, 1000).unref?.();
 
@@ -420,17 +452,13 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 app.listen(PORT, () => {
   console.log('[listen] port', PORT);
   setImmediate(() => {
-    console.log(`[sched] ${JOBS_DISABLED ? 'disabled' : 'enabled'} (DISABLE_JOBS=${process.env.DISABLE_JOBS ?? '<unset>'})`);
+    console.log(`[sched] ${SHOULD_START_INGEST ? 'enabled' : 'disabled'} (JOBS_ENABLED=${cfg.JOBS_ENABLED}; INGEST_SOURCES=${cfg.INGEST_SOURCES.length ? 'set' : 'empty'})`);
     try {
-      if (!JOBS_DISABLED) {
-        // Phase 1: Start what ENV specified (RSS expected)
+      if (SHOULD_START_INGEST) {
+        // Start only what ENV specified
         startIngests();
         // Canary-only fastlane
         try { startFastlaneIfEnabled(app); } catch {}
-        // Phase 2: staged enables (idempotent, no ENV mutation)
-        setTimeout(() => { try { enableAdapter('nyse_notices'); } catch {} }, 120_000).unref?.();
-        setTimeout(() => { try { enableAdapter('cme_notices'); } catch {} }, 180_000).unref?.();
-        setTimeout(() => { try { enableAdapter('nasdaq_halts'); } catch {} }, 240_000).unref?.();
       } else {
         // leave ingest off; nothing else to do
       }
@@ -439,6 +467,29 @@ app.listen(PORT, () => {
     }
   });
 });
+
+// --- dual-mode: start scheduler if enabled (non-blocking) ---
+const jobsEnabledEnv = (process.env.JOBS_ENABLED || '').trim().toLowerCase();
+const jobsEnabled = jobsEnabledEnv === '1' || jobsEnabledEnv === 'true';
+
+if (jobsEnabled) {
+  (async () => {
+    try {
+      // dynamic import to match transpiled .js in dist
+      const mod: any = await import('./ingest/registry.js');
+      const start = (mod as any)?.startIngests ?? (mod as any)?.default?.startIngests;
+      if (typeof start === 'function') {
+        start();
+        // keep this log minimal; prod LOG_LEVEL=error hides it anyway
+        console.log('[boot] startIngests() launched');
+      } else {
+        console.warn('[boot] startIngests not found on module');
+      }
+    } catch (err) {
+      console.error('[boot] failed to start ingests', err);
+    }
+  })();
+}
 
 // Runtime diagnostics: capture termination and error signals for root-cause analysis
 process.on('SIGTERM', () => console.error('[proc] SIGTERM'));

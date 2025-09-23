@@ -66,7 +66,7 @@ console.log('[deploy] image digest =', digest);
 const DEBUG_PUSH_KEY = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 32);
 const envMap = {
   NODE_ENV: 'production',
-  DISABLE_JOBS: '0',
+  
   DEBUG_INGEST: '1',
   SSE_ENABLED: '1',
   INGEST_SOURCES: 'prnewswire,businesswire,nyse_notices,nasdaq_halts',
@@ -169,7 +169,7 @@ const snapshot = {
   prev_revision: prevRevision,
   env: {
     NODE_ENV: 'production',
-    DISABLE_JOBS: '0',
+    
     DEBUG_INGEST: '1',
     SSE_ENABLED: '1',
     INGEST_SOURCES: 'prnewswire,sec_press,fed_press,nyse_notices,cme_notices,nasdaq_halts',

@@ -3,7 +3,9 @@ import { broadcastBreaking } from "../sse.js";
 import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
-import { getGovernor } from "./governor.js";
+import { getGovernor, classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
 
 const URL = process.env.NYSE_NOTICES_URL ?? DEFAULT_URLS.NYSE_NOTICES_URL; // HTML/RSS/JSON
@@ -26,7 +28,7 @@ let inFlight = false;
 let deferred = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
-const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 800_000);
 const GOV = getGovernor();
 const SOURCE = "nyse_notices";
 const HOST: "nyse.com" = "nyse.com";
@@ -135,7 +137,7 @@ function parseRSSorHTML(text: string): Notice[] {
 export function startNyseNoticesIngest() {
   if (timer) return;
   console.log("[ingest:nyse_notices] start");
-  if (!URL) { console.warn("[ingest:nyse_notices] missing URL; skipping fetch"); return; }
+  if (!URL) { const w = warnOncePer('ingest:nyse_notices:missing_url', 60_000); w("[ingest:nyse_notices] missing URL; skipping fetch"); return; }
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
@@ -148,10 +150,10 @@ export function startNyseNoticesIngest() {
       if (!tok.ok) { const d = Math.max(500, tok.waitMs); if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip budget wait, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       const r = await fetchFeed();
       try { (await import('./index.js')).reportTick?.('nyse_notices', { status: (r as any)?.status }); } catch {}
-      if (r.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] 304, streak', noChangeStreak, 'base', base, 'next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status === 304) { ingestOutcome(SOURCE, 'HTTP_304'); noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] 304, streak', noChangeStreak, 'base', base, 'next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status === 429) { const base = GOV.nextDelayAfter(SOURCE, 'R429'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip 429 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (r.status === 403) { const base = GOV.nextDelayAfter(SOURCE, 'R403'); const d = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:nyse_notices] skip 403 backoff, next in', d, 'ms'); timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
-      if (r.status !== 200) { console.warn("[ingest:nyse_notices] error status", r.status); const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if (r.status !== 200) { const outcome = classifyOutcome(r?.status); ingestOutcome(SOURCE, outcome); const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000)); w(`[ingest:${SOURCE}] ${outcome} status=${r?.status ?? 'NA'}`); const base = GOV.nextDelayAfter(SOURCE, outcome); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       etag = r.etag || etag;
       lastModified = r.lastModified || lastModified;
 
@@ -188,13 +190,14 @@ export function startNyseNoticesIngest() {
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
       const recency = items.length ? (now - items[0].publishedAt) : undefined;
+      ingestOutcome(SOURCE, 'HTTP_200');
       const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: recency });
       const d = noChangeStreak >= 3 ? 15000 : base;
       if (DEBUG_INGEST) console.log('[ingest:nyse_notices] 200, streak', noChangeStreak, 'base', base, 'next in', d, 'ms');
       timer = setTimeout(tick, d); (timer as any)?.unref?.();
       return;
     } catch (e) {
-      console.warn("[ingest:nyse_notices] error", (e as any)?.message || e);
+      { const w = warnOncePer('ingest:nyse_notices:error', 60_000); w("[ingest:nyse_notices] error", (e as any)?.message || e); }
     } finally {
       inFlight = false;
       if (deferred) { deferred = false; setImmediate(tick); return; }

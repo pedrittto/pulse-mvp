@@ -4,6 +4,9 @@ import { broadcastBreaking } from "../sse.js";
 import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
+import { classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { canonicalIdFromItem } from "./lib/canonicalId.js";
 
 const SOURCE_GNW = 'globenewswire';
@@ -70,9 +73,12 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
   }
   try {
     const r = await fetchFeed(url);
-    if (r.status === 304) return { http_status: 304, new_items: 0 };
+    if (r.status === 304) { ingestOutcome(SOURCE_GNW, 'HTTP_304'); return { http_status: 304, new_items: 0 }; }
     if (r.status !== 200 || !r.text) {
-      if (DEBUG_INGEST) console.warn("[ingest:globenewswire] error status", r.status);
+      const outcome = classifyOutcome(r?.status);
+      ingestOutcome(SOURCE_GNW, outcome);
+      const w = warnOncePer(`ingest:${SOURCE_GNW}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+      w(`[ingest:${SOURCE_GNW}] ${outcome} status=${r?.status ?? 'NA'}`);
       return { http_status: r.status || 0, new_items: 0 };
     }
     etag = r.etag || etag;
@@ -109,7 +115,10 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
     }
     return { http_status: 200, new_items: newCount };
   } catch (e) {
-    if (DEBUG_INGEST) console.warn("[ingest:globenewswire] error", (e as any)?.message || e);
+    const outcome = classifyOutcome(0, e);
+    ingestOutcome(SOURCE_GNW, outcome);
+    const w = warnOncePer(`ingest:${SOURCE_GNW}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+    w(`[ingest:${SOURCE_GNW}] error ${(e as any)?.message || e}`);
     return { http_status: 599, new_items: 0 };
   }
 }
@@ -125,7 +134,7 @@ let warnedMissing = false;
 function warnOnceMissingUrl() {
   if (warnedMissing) return;
   warnedMissing = true;
-  try { console.warn('[ingest:globenewswire] missing URL; set GLOBENEWSWIRE_RSS_URL to enable'); } catch {}
+  try { const w = warnOncePer('ingest:globenewswire:missing_url', 60_000); w('[ingest:globenewswire] missing URL; set GLOBENEWSWIRE_RSS_URL to enable'); } catch {}
 }
 
 // --- Internal helpers mirroring prnewswire.js ---

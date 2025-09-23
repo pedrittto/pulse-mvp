@@ -2,7 +2,9 @@
 import { broadcastBreaking } from "../sse.js";
 import { recordPublisherLatency, recordPipelineLatency, setTimestampSource } from "../metrics/latency.js";
 import { pickAgent } from "./http_agent.js";
-import { getGovernor } from "./governor.js";
+import { getGovernor, classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { canonicalIdFromItem } from "./lib/canonicalId.js";
 const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
@@ -97,7 +99,7 @@ export function startPRNewswireIngest() {
     if (timer)
         return;
     console.log("[ingest:prnewswire] start");
-    if (!URL) { if (!warnedMissingUrl) { console.warn("[ingest:prnewswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
+    if (!URL) { if (!warnedMissingUrl) { const w = warnOncePer('ingest:prnewswire:missing_url', 60_000); w("[ingest:prnewswire] missing URL; skipping fetch"); warnedMissingUrl = true; } return; }
     const schedule = (ms) => {
         const base = typeof ms === 'number' ? ms : jitter();
         const nextMs = base + Math.floor(base * 0.15 * (Math.random() - 0.5));
@@ -125,10 +127,10 @@ export function startPRNewswireIngest() {
                 return;
             }
             if (r.status !== 200 || !r.text) {
-                console.warn("[ingest:prnewswire] error status", r.status);
-                let outcome = 'HTTP_200';
-                if (r.status === 429) outcome = 'R429';
-                else if (r.status === 403) outcome = 'R403';
+                const outcome = classifyOutcome(r?.status);
+                ingestOutcome(SOURCE, outcome);
+                const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+                w(`[ingest:${SOURCE}] ${outcome} status=${r?.status ?? 'NA'}`);
                 const d = GOV.nextDelayAfter(SOURCE, outcome);
                 schedule(d);
                 return;
@@ -170,11 +172,16 @@ export function startPRNewswireIngest() {
                 lastGuids = new Set(Array.from(lastGuids).slice(-1000));
             }
             const recency = items.length ? (now - items[0].publishedAt) : undefined;
-            const d = GOV.nextDelayAfter(SOURCE, anyNew ? 'NEW' : 'HTTP_200', { recencyMs: recency });
+            const outcome = anyNew ? 'NEW' : 'HTTP_200';
+            ingestOutcome(SOURCE, outcome);
+            const d = GOV.nextDelayAfter(SOURCE, outcome, { recencyMs: recency });
             schedule(d);
         }
         catch (e) {
-            console.warn("[ingest:prnewswire] error", (e && e.message) || e);
+            const outcome = classifyOutcome(0, e);
+            ingestOutcome(SOURCE, outcome);
+            const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+            w(`[ingest:${SOURCE}] error ${(e && e.message) || e}`);
         }
         finally {
             inFlight = false;

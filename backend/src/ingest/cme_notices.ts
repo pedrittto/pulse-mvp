@@ -3,7 +3,9 @@ import { broadcastBreaking } from "../sse.js";
 // excluded (Class C)
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { pickAgent } from "./http_agent.js";
-import { getGovernor } from "./governor.js";
+import { getGovernor, classifyOutcome } from "./governor.js";
+import { warnOncePer } from "../log/rateLimit.js";
+import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
@@ -25,7 +27,7 @@ let inFlight = false;
 let deferred = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
-const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 2_000_000);
+const MAX_BYTES_HTML = Number(process.env.MAX_BYTES_HTML || 800_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 let noChangeStreak = 0;
@@ -129,7 +131,7 @@ function parseNoticePage(html: string, headers?: Headers): { title: string; publ
 export function startCmeNoticesIngest(): void {
   if (timer) return;
   console.log("[ingest:cme_notices] start");
-  if (!FEED_URL) { console.warn("[ingest:cme_notices] missing URL; skipping fetch"); return; }
+  if (!FEED_URL) { const w = warnOncePer('ingest:cme_notices:missing_url', 60_000); w("[ingest:cme_notices] missing URL; skipping fetch"); return; }
   const schedule = () => { timer = setTimeout(tick, jitter()); (timer as any)?.unref?.(); };
   const tick = async () => {
     try {
@@ -146,12 +148,12 @@ export function startCmeNoticesIngest(): void {
       const t0 = Date.now();
       const hub = await httpGet(FEED_URL, true);
       const dt = Date.now() - t0;
-      if ((hub as any).status === 0) { const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
+      if ((hub as any).status === 0) { const outcome = classifyOutcome(0); ingestOutcome(SOURCE, outcome); const base = GOV.nextDelayAfter(SOURCE, outcome); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
       if (hub.status === 304) { noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const delay = noChangeStreak >= 3 ? 15000 : base; if (DEBUG_INGEST) console.log('[ingest:cme_notices] 304 in', dt, 'ms, streak', noChangeStreak, 'base', base, 'next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] http', hub.status, 'in', dt, 'ms', hub.etag || hub.lastModified || '');
       if (hub.status === 429) { const delay = GOV.nextDelayAfter(SOURCE, 'R429'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 429 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       if (hub.status === 403) { const delay = GOV.nextDelayAfter(SOURCE, 'R403'); if (DEBUG_INGEST) console.log('[ingest:cme_notices] skip 403 backoff in', dt, 'ms, next in', delay, 'ms'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
-      if (hub.status !== 200 || !hub.text) { console.warn("[ingest:cme_notices] error status", hub.status); const delay = GOV.nextDelayAfter(SOURCE, 'HTTP_200'); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
+      if (hub.status !== 200 || !hub.text) { const outcome = classifyOutcome(hub?.status); ingestOutcome(SOURCE, outcome); const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000)); w(`[ingest:${SOURCE}] ${outcome} status=${hub?.status ?? 'NA'}`); const delay = GOV.nextDelayAfter(SOURCE, outcome); timer = setTimeout(tick, delay); (timer as any)?.unref?.(); return; }
       etag = hub.etag || etag;
       lastModified = hub.lastModified || lastModified;
 
@@ -180,8 +182,12 @@ export function startCmeNoticesIngest(): void {
       }
       if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
     } catch (e) {
-      console.warn("[ingest:cme_notices] error", (e as any)?.message || e);
+      const outcome = classifyOutcome(0, e);
+      ingestOutcome(SOURCE, outcome);
+      const w = warnOncePer(`ingest:${SOURCE}`, Number(process.env.WARN_COOLDOWN_MS ?? 60_000));
+      w(`[ingest:${SOURCE}] error ${(e as any)?.message || e}`);
     } finally {
+      ingestOutcome(SOURCE, 'HTTP_200');
       const baseDelay = GOV.nextDelayAfter(SOURCE, 'HTTP_200');
       const delay = noChangeStreak >= 3 ? 15000 : baseDelay;
       if (DEBUG_INGEST) console.log('[ingest:cme_notices] next in', delay, 'ms', 'streak', noChangeStreak, 'base', baseDelay);
