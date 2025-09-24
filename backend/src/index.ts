@@ -16,6 +16,66 @@ app.use(cors());
 // Health endpoint
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// ===== Tick-by-request implementation =====
+let tickRunning = false;
+function log(level: 'info' | 'warn', msg: string, extra: Record<string, unknown> = {}) {
+  const line = `[tick] ${msg} ${JSON.stringify(extra)}`;
+  if (level === 'warn') { try { console.warn(line); } catch {} } else { try { console.info(line); } catch {} }
+}
+
+async function runOneCycle(): Promise<{ n: number; t_ms: number }> {
+  const startedAt = Date.now();
+  // Lazy import ingest orchestrator to avoid side-effects on cold boot
+  const ingest: any = await import('./ingest/index.js');
+  const sources: string[] = Array.isArray(ingest.resolveActive?.(process.env.INGEST_SOURCES))
+    ? ingest.resolveActive(process.env.INGEST_SOURCES)
+    : String(process.env.INGEST_SOURCES || '')
+        .split(',')
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+
+  let n = 0;
+  for (const src of sources) {
+    const t0 = Date.now();
+    try {
+      if (typeof ingest.runProbeOnce === 'function') {
+        await ingest.runProbeOnce(src);
+      } else if (ingest && ingest[src] && typeof ingest[src].probeOnce === 'function') {
+        await ingest[src].probeOnce();
+      }
+      n++;
+      log('info', 'source_ok', { src, ms: Date.now() - t0 });
+    } catch (e: any) {
+      log('warn', 'source_err', { src, ms: Date.now() - t0, err: String(e?.message || e) });
+    }
+  }
+
+  const t_ms = Date.now() - startedAt;
+  log('info', 'cycle_done', { n, ms: t_ms });
+  return { n, t_ms };
+}
+
+function requireTickKey(req: any, res: any, next: any) {
+  const key = process.env.TICK_KEY;
+  if (!key) return res.status(500).json({ ok: false, error: 'tick_key_not_set' });
+  if (req.header('X-Tick-Key') !== key) return res.status(401).json({ ok: false, error: 'unauthorized' });
+  next();
+}
+
+app.post('/_internal/tick', requireTickKey, async (req, res) => {
+  if (tickRunning) return res.status(429).json({ ok: false, error: 'tick_in_progress' });
+  tickRunning = true;
+  try {
+    const out = await runOneCycle();
+    return res.json({ ok: true, ...out });
+  } catch (e: any) {
+    log('warn', 'cycle_err', { err: String(e?.message || e) });
+    return res.status(500).json({ ok: false, error: 'cycle_failed' });
+  } finally {
+    tickRunning = false;
+  }
+});
+
 // Lazy metrics endpoint
 app.get('/metrics-summary', async (_req, res) => {
   try {
@@ -52,6 +112,12 @@ app.listen(port, host, () => {
   }
   if (isCloudRun && !allowProd) {
     console.warn('[guard] HTTP-only: ALLOW_PROD_INGEST!=1 on Cloud Run');
+    return;
+  }
+
+  // Disable legacy background loop if requested
+  if ((process.env.ENABLE_BACKGROUND_LOOP || '').trim() === '0') {
+    try { console.log('[sched] background disabled via ENABLE_BACKGROUND_LOOP=0'); } catch {}
     return;
   }
 
