@@ -1,5 +1,4 @@
-﻿import "dotenv/config";
-import express from "express";
+﻿import express from "express";
 import cors from "cors";
 
 // Boot banners for visibility
@@ -38,6 +37,9 @@ const host = '0.0.0.0';
 
 app.listen(port, host, () => {
   console.log('[boot] http listening', { port, host });
+  
+  // Optional: local-only, safe in prod
+  import('dotenv/config').catch(() => {});
 
   // Env gates (never exit; HTTP must stay alive)
   const jobsEnabled = /^(1|true)$/i.test((process.env.JOBS_ENABLED || '').trim());
