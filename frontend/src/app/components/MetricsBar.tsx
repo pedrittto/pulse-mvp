@@ -39,49 +39,22 @@ export default function MetricsBar({ base, path }: MetricsBarProps) {
 
   useEffect(() => {
     if (!endpoint) return;
-    let aborted = false;
-    const ctrl = new AbortController();
-
-    const DEFAULT_POLL_MS = 15_000;
-    const RL_BACKOFF_MS = 60_000;
-    const RL_JITTER_MS = 30_000;
-    const ERROR_BACKOFF_MS = 30_000;
-
-    const schedule = (ms: number) => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(load, ms);
-    };
-
-    const load = async () => {
-      if (aborted) return;
+    let dead = false;
+    const fetchMetrics = async () => {
       try {
+        const res = await fetch(endpoint, { cache: "no-store" });
+        const j = await res.json();
+        if (dead) return;
         setError(null);
-        const res = await fetch(endpoint, { signal: ctrl.signal, cache: "no-store" });
-        if (res.status === 429) {
-          setError("Rate limited: backing off…");
-          const delay = RL_BACKOFF_MS + Math.floor(Math.random() * RL_JITTER_MS);
-          schedule(delay);
-          return;
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = (await res.json()) as MetricsSummary;
-        if (!aborted) setData(json);
-        schedule(DEFAULT_POLL_MS);
-      } catch (e) {
-        if (aborted) return;
-        const delay = ERROR_BACKOFF_MS + Math.floor(Math.random() * 5_000);
-        schedule(delay);
+        setData(j as MetricsSummary);
+      } catch {
+        if (dead) return;
+        setError("metrics fetch failed");
       }
     };
-
-    // initial load
-    load();
-
-    return () => {
-      aborted = true;
-      ctrl.abort();
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    fetchMetrics();
+    const t = setInterval(fetchMetrics, 30000);
+    return () => { dead = true; clearInterval(t); };
   }, [endpoint]);
 
   const sseSummary = useMemo(() => {

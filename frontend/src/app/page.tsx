@@ -1,5 +1,5 @@
 ﻿"use client";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import NewsCard from "./components/NewsCard";
 import MetricsBar from "./components/MetricsBar";
 
@@ -47,32 +47,21 @@ type BreakingItem = {
   visible_at_ms: number;
 };
 
-type ConnectionState = "idle" | "connecting" | "live" | "reconnecting" | "down";
+type ConnModel = { state: "connecting" | "connected" | "reconnecting"; lastEventSec: number };
 
 export default function Home() {
   const API_BASE = getApiBase();
   // Connection and data state
-  const [conn, setConn] = useState<ConnectionState>("idle");
-  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [conn, setConn] = useState<ConnModel>({ state: "connecting", lastEventSec: 0 });
   const [items, setItems] = useState<BreakingItem[]>([]);
 
   // UI state
   const [query, setQuery] = useState<string>("");
-  const [priorityTerms, setPriorityTerms] = useState<string[]>([]);
-  const [priorityInput, setPriorityInput] = useState<string>("");
+  const [termsText, setTermsText] = useState<string>("");
   const [priorityFirst, setPriorityFirst] = useState<boolean>(true);
 
-  // Derived ticking value to update "seconds since last event" display
-  const [nowTick, setNowTick] = useState<number>(Date.now());
-
-  // Internals (not in React state)
-  const esRef = useRef<EventSource | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backoffMsRef = useRef<number>(1000); // start 1s
-
-  const SSE_PATH = process.env.NEXT_PUBLIC_SSE_PATH ?? "/sse/breaking";
   const METRICS_PATH = process.env.NEXT_PUBLIC_METRICS_PATH ?? "/metrics-summary";
-  const SSE_URL = API_BASE ? `${API_BASE}${SSE_PATH}` : null;
+  const apiBaseMissing = !API_BASE;
 
   // Normalize various incoming payload shapes to BreakingItem
   function coerceBreaking(data: any): BreakingItem | null {
@@ -110,113 +99,87 @@ export default function Home() {
     };
   }
 
-  // Load persisted priority terms on mount
+  // Priority terms rehydrate
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("priorityTerms");
-      if (raw) {
-        const arr = JSON.parse(raw) as string[];
-        if (Array.isArray(arr)) {
-          setPriorityTerms(arr);
-          setPriorityInput(arr.join(", "));
-        }
-      }
+      const t = localStorage.getItem("pulse_terms");
+      if (t !== null) setTermsText(t);
     } catch {}
   }, []);
 
-  // Persist on change
   useEffect(() => {
-    try {
-      localStorage.setItem("priorityTerms", JSON.stringify(priorityTerms));
-    } catch {}
-  }, [priorityTerms]);
+    // Simple explicit SSE lifecycle using env URL
+    const url = `${process.env.NEXT_PUBLIC_API_BASE_URL!}${process.env.NEXT_PUBLIC_SSE_PATH ?? "/sse/breaking"}`;
+    const es = new EventSource(url);
 
-  useEffect(() => {
-    if (!API_BASE) return; // no-op until we have a valid API base
-    // UI seconds ticker
-    const intervalId: ReturnType<typeof setInterval> = setInterval(() => setNowTick(Date.now()), 1000);
-
-    // Single-connection SSE with long backoff and jitter
-    let es: EventSource | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const BASE_BACKOFF_MS = 60_000; // 60s
-    const JITTER_MS = 30_000;       // 0..30s
-
-    const sseUrl = `${API_BASE}${SSE_PATH}`;
-
-    const open = () => {
-      // Only one live EventSource per tab
-      if (es || (typeof window !== "undefined" && window.__PULSE_SSE__)) return;
-      setConn("reconnecting");
-      const next = new EventSource(sseUrl);
-      es = next;
-      if (typeof window !== "undefined") window.__PULSE_SSE__ = next;
-
-      next.addEventListener("open", () => setConn("live"));
-
-      next.addEventListener("hello", () => setLastEventAt(Date.now()));
-      next.addEventListener("ping", () => setLastEventAt(Date.now()));
-
-      next.addEventListener("breaking", (ev: MessageEvent) => {
-        setLastEventAt(Date.now());
-        try {
-          const raw = JSON.parse(ev.data);
-          const item = coerceBreaking(raw);
-          if (!item) return;
-          setItems((prev) => (prev.some((p) => p.id === item.id) ? prev : [item, ...prev].slice(0, 300)));
-        } catch {}
-      });
-
-      // Fallback default message
-      next.addEventListener("message", (ev: MessageEvent) => {
-        if (process.env.NODE_ENV !== "production") {
-          try { console.debug("SSE message", ev.data); } catch {}
-        }
-        try {
-          const raw = JSON.parse(ev.data);
-          const item = coerceBreaking(raw);
-          if (!item) return;
-          setItems((prev) => (prev.some((p) => p.id === item.id) ? prev : [item, ...prev].slice(0, 300)));
-          setLastEventAt(Date.now());
-        } catch {}
-      });
-
-      next.addEventListener("error", () => {
-        setConn("reconnecting");
-        try { next.close(); } catch {}
-        es = null;
-        if (typeof window !== "undefined" && window.__PULSE_SSE__) window.__PULSE_SSE__ = undefined;
-        const delay = BASE_BACKOFF_MS + Math.floor(Math.random() * JITTER_MS);
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(open, delay);
-      });
+    const onOpen = () => setConn({ state: "connected", lastEventSec: 0 });
+    const onError = () => setConn((c) => ({ ...c, state: "reconnecting" }));
+    const handleItem = (data: any) => {
+      const item = coerceBreaking(data);
+      if (!item) return;
+      setItems((prev) => (prev.some((p) => p.id === item.id) ? prev : [item, ...prev].slice(0, 300)));
     };
-
-    // Optional jitter on first connect to avoid herding
-    const firstDelay = Math.floor(Math.random() * 1500);
-    const firstTimer = setTimeout(open, firstDelay);
-
-    const handleOnline = () => {
-      if (!es && !(typeof window !== "undefined" && window.__PULSE_SSE__)) {
-        if (reconnectTimer) clearTimeout(reconnectTimer);
-        reconnectTimer = setTimeout(open, 0);
-      }
+    const onMessage = (e: MessageEvent) => {
+      try { handleItem(JSON.parse(e.data)); } catch {}
+      setConn((c) => ({ ...c, lastEventSec: 0 }));
     };
-    window.addEventListener("online", handleOnline);
+    const onBreaking = (e: MessageEvent) => {
+      try { handleItem(JSON.parse(e.data)); } catch {}
+      setConn((c) => ({ ...c, lastEventSec: 0 }));
+    };
+    const onHello = () => setConn((c) => ({ ...c, lastEventSec: 0 }));
+    const onPing = () => setConn((c) => ({ ...c, lastEventSec: 0 }));
 
+    es.addEventListener("open", onOpen);
+    es.addEventListener("error", onError);
+    es.addEventListener("message", onMessage);
+    es.addEventListener("breaking", onBreaking);
+    es.addEventListener("hello", onHello);
+    es.addEventListener("ping", onPing);
+
+    const tick = setInterval(() => setConn((c) => ({ ...c, lastEventSec: c.lastEventSec + 1 })), 1000);
     return () => {
-      clearInterval(intervalId);
-      window.removeEventListener("online", handleOnline);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      clearTimeout(firstTimer);
-      if (es) { try { es.close(); } catch {} es = null; }
-      if (typeof window !== "undefined" && window.__PULSE_SSE__) window.__PULSE_SSE__ = undefined;
+      clearInterval(tick);
+      es.removeEventListener("open", onOpen);
+      es.removeEventListener("error", onError);
+      es.removeEventListener("message", onMessage);
+      es.removeEventListener("breaking", onBreaking);
+      es.removeEventListener("hello", onHello);
+      es.removeEventListener("ping", onPing);
+      try { es.close(); } catch {}
     };
-  }, [API_BASE, SSE_PATH]);
+  }, []);
 
-  // Env guard: show setup message when API base is missing (after hooks)
-  if (!API_BASE) {
+  // Note: Avoid early return before hooks to preserve stable hook order
+
+  // Derived lists
+  const terms = useMemo(
+    () => termsText.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+    [termsText]
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
+    const withHit = base.map((it) => ({ it, hit: terms.some((t) => t && it.title.toLowerCase().includes(t)) }));
+    withHit.sort((a, b) => {
+      if (priorityFirst) {
+        const pd = Number(b.hit) - Number(a.hit);
+        if (pd !== 0) return pd;
+      }
+      return (b.it.visible_at_ms ?? 0) - (a.it.visible_at_ms ?? 0);
+    });
+    return withHit;
+  }, [items, query, terms, priorityFirst]);
+
+  const saveTerms = () => {
+    try { localStorage.setItem("pulse_terms", termsText); } catch {}
+  };
+  const canSave = termsText.trim().length > 0;
+
+  const hasOverride = typeof window !== "undefined" && (() => { try { return !!localStorage.getItem("apiBaseOverride"); } catch { return false; } })();
+
+  if (apiBaseMissing) {
     return (
       <main style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ maxWidth: 640, textAlign: "center" }}>
@@ -230,40 +193,11 @@ export default function Home() {
     );
   }
 
-  const secondsSince = lastEventAt ? Math.max(0, Math.floor((nowTick - lastEventAt) / 1000)) : null;
-
-  // Derived lists
-  const normalizedTerms = useMemo(
-    () => priorityTerms.map((t) => t.trim().toLowerCase()).filter(Boolean),
-    [priorityTerms]
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const base = q ? items.filter((it) => it.title.toLowerCase().includes(q)) : items;
-    const withHit = base.map((it) => ({ it, hit: normalizedTerms.some((t) => t && it.title.toLowerCase().includes(t)) }));
-    withHit.sort((a, b) => {
-      if (priorityFirst) {
-        const pd = Number(b.hit) - Number(a.hit);
-        if (pd !== 0) return pd;
-      }
-      return (b.it.visible_at_ms ?? 0) - (a.it.visible_at_ms ?? 0);
-    });
-    return withHit;
-  }, [items, query, normalizedTerms, priorityFirst]);
-
-  const applyPriorityInput = () => {
-    const parts = priorityInput.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
-    setPriorityTerms(parts);
-  };
-
-  const hasOverride = typeof window !== "undefined" && (() => { try { return !!localStorage.getItem("apiBaseOverride"); } catch { return false; } })();
-
   return (
     <main style={{ padding: 24 }}>
       <h1>Pulse MVP</h1>
       <p>
-        <b>Connection:</b> {conn} | <b>Last event:</b> {secondsSince === null ? "—" : `${secondsSince}s`} | <b>Items:</b> {items.length} | {" "}
+        <b>Connection:</b> {conn.state} | <b>Last event:</b> {`${conn.lastEventSec}s`} | <b>Items:</b> {items.length} | {" "}
         <b>API_BASE:</b> <code>{API_BASE}</code>
         {hasOverride && (
           <>
@@ -290,9 +224,8 @@ export default function Home() {
           style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, minWidth: 220 }}
         />
         <input
-          value={priorityInput}
-          onChange={(e) => setPriorityInput(e.target.value)}
-          onBlur={applyPriorityInput}
+          value={termsText}
+          onChange={(e) => setTermsText(e.target.value)}
           placeholder="Priority terms (comma-separated)"
           style={{ padding: 8, border: "1px solid #ccc", borderRadius: 4, minWidth: 320 }}
         />
@@ -300,7 +233,7 @@ export default function Home() {
           <input type="checkbox" checked={priorityFirst} onChange={(e) => setPriorityFirst(e.target.checked)} />
           Priority first
         </label>
-        <button onClick={applyPriorityInput} style={{ padding: "8px 10px", border: "1px solid #ccc", borderRadius: 4, background: "#f6f6f6" }}>Save terms</button>
+        <button onClick={saveTerms} disabled={!canSave} style={{ padding: "8px 10px", border: "1px solid #ccc", borderRadius: 4, background: "#f6f6f6", opacity: canSave ? 1 : 0.6 }}>Save terms</button>
       </section>
 
       <section style={{ marginTop: 8 }}>

@@ -7,6 +7,7 @@ import { getGovernor, classifyOutcome } from "./governor.js";
 import { warnOncePer } from "../log/rateLimit.js";
 import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX } from "./utils/dedupe.js";
 
 const FEED_URL = process.env.FED_PRESS_URL ?? DEFAULT_URLS.FED_PRESS_URL;
 
@@ -53,14 +54,19 @@ async function fetchOnce(): Promise<{ status: number; text?: string; etag?: stri
   };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(FEED_URL, {
+  const d = pickAgent(FEED_URL) as unknown as any;
+  const init: RequestInit & { dispatcher?: any } = {
     method: "GET",
-    headers,
+    headers: { ...headers, "accept-encoding": "gzip" },
     redirect: "follow",
     cache: "no-store",
     signal: AbortSignal.timeout(2000),
-  });
+  };
+  if (d) init.dispatcher = d;
+  const res = await fetch(FEED_URL, init);
   if (res.status === 304) return { status: 304 };
+  const cl = Number(res.headers.get("content-length") || 0);
+  if (Number.isFinite(cl) && cl > MAX_BYTES_HTML) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
   let text: string | undefined;
   try { text = await readTextWithCap(res as any, MAX_BYTES_HTML); } catch (e) { if ((e as any)?.message === 'cap_exceeded') { respTooLarge++; } throw e; }
   return { status: res.status, text, etag: res.headers.get("etag") ?? undefined, lastModified: res.headers.get("last-modified") ?? undefined, ct: res.headers.get("content-type") ?? undefined };
@@ -124,6 +130,7 @@ export function startFedPressIngest(): void {
       if (GOV.getState(SOURCE) === 'BACKOFF') { const d = Math.max(500, backoffMs); schedule(d); return; }
       const tok = GOV.claimHostToken(HOST);
       if (!tok.ok) { schedule(Math.max(500, tok.waitMs)); return; }
+      // No per-adapter locks; single global scheduler runs one at a time
       const r = await fetchOnce();
       if (r.status === 304) { ingestOutcome(SOURCE, 'HTTP_304'); noChangeStreak++; const base = GOV.nextDelayAfter(SOURCE, 'HTTP_304'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
       if (r.status === 429) { ingestOutcome(SOURCE, 'R429'); const base = GOV.nextDelayAfter(SOURCE, 'R429'); const d = noChangeStreak >= 3 ? 15000 : base; schedule(d); return; }
@@ -139,6 +146,8 @@ export function startFedPressIngest(): void {
       } else if (r.text) {
         items = parseHTML(r.text, FEED_URL!);
       }
+      // Drop large body reference ASAP
+      (r as any).text = undefined as any;
 
       const now = Date.now();
       for (const it of items) {
@@ -146,6 +155,8 @@ export function startFedPressIngest(): void {
         const canonicalId = `fed_press:${it.url}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
+        // enforce dedupe cap immediately after insert; medium/heavy prefers pruneTo=2500
+        trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
         if (publishedAt < now - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
@@ -163,7 +174,8 @@ export function startFedPressIngest(): void {
         recordPipelineLatency("fed_press", visibleAt, visibleAt + 1);
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
-      if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
+      // bound dedupe memory (steady-state ~2500, hard cap 3000)
+      trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
     } catch (e) {
       const outcome = classifyOutcome(0, e);
       ingestOutcome(SOURCE, outcome);
@@ -218,6 +230,7 @@ export async function probeOnce() {
     } else {
       items = parseHTML(r.text, FEED_URL!);
     }
+    (r as any).text = undefined as any;
     const parse_ms = Date.now() - p0;
     const latest = items.reduce((m, it) => Math.max(m, it.publishedAt || 0), 0) || null;
     return {

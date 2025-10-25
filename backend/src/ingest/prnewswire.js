@@ -7,6 +7,7 @@ import { warnOncePer } from "../log/rateLimit.js";
 import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { canonicalIdFromItem } from "./lib/canonicalId.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO } from "./utils/dedupe.js";
 const URL = process.env.PRN_RSS_URL ?? DEFAULT_URLS.PRN_RSS_URL;
 const POLL_MS_BASE = 1200; // ~1.2 s clamp
 const JITTER_MS = 200;
@@ -22,7 +23,7 @@ let inFlight = false;
 let deferred = false;
 let overlapsPrevented = 0;
 let respTooLarge = 0;
-const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
+const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 800_000);
 let watermarkPublishedAt = 0; // newest accepted publishedAt
 let warnedMissingUrl = false;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
@@ -49,19 +50,23 @@ function extractItems(xml) {
         .filter(it => it.guid && it.title && it.link);
 }
 async function fetchFeed() {
-    const headers = { "user-agent": "pulse-ingest/1.0" };
+    const headers = { "user-agent": "pulse-ingest/1.0", "accept-encoding": "gzip" };
     if (etag)
         headers["if-none-match"] = etag;
     if (lastModified)
         headers["if-modified-since"] = lastModified;
     if (DEBUG_INGEST) console.log("[ingest:prnewswire] fetching", URL, { etag, ims: lastModified });
-    const res = await fetch(URL, {
+    const d = pickAgent(URL);
+    const init = {
         method: "GET",
         headers,
         redirect: "follow",
         cache: "no-store",
-        signal: AbortSignal.timeout(900),
-    });
+        signal: AbortSignal.timeout(900)
+    };
+    if (d)
+        init.dispatcher = d;
+    const res = await fetch(URL, init);
     if (DEBUG_INGEST) console.log("[ingest:prnewswire] http", res.status, { etag: res.headers.get("etag"), lastModified: res.headers.get("last-modified") });
     if (res.status === 304)
         return { status: 304 };
@@ -139,11 +144,15 @@ export function startPRNewswireIngest() {
             lastModified = r.lastModified || lastModified;
             const now = Date.now();
             const items = extractItems(r.text);
+            // Drop large body ref ASAP
+            r.text = undefined;
             let anyNew = false;
             for (const it of items) {
                 if (lastGuids.has(it.guid))
                     continue;
                 lastGuids.add(it.guid);
+                // enforce dedupe cap immediately after insert
+                trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
                 // freshness & watermark
                 if (!SMOKE_ACCEPT_OLD && it.publishedAt < now - FRESH_MS)
                     continue;
@@ -168,9 +177,8 @@ export function startPRNewswireIngest() {
                     watermarkPublishedAt = it.publishedAt;
                 anyNew = true;
             }
-            if (lastGuids.size > 2000) {
-                lastGuids = new Set(Array.from(lastGuids).slice(-1000));
-            }
+            // bound dedupe memory (steady-state ~2000, hard cap 3000)
+            trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
             const recency = items.length ? (now - items[0].publishedAt) : undefined;
             const outcome = anyNew ? 'NEW' : 'HTTP_200';
             ingestOutcome(SOURCE, outcome);

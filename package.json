@@ -8,6 +8,26 @@
     "dev:be": "pnpm -C backend dev",
     "dev:fe": "pnpm -C frontend dev",
     "smoke:be": "pnpm -C backend smoke",
-    "deploy:canary": "node backend/scripts/deploy_canary.mjs"
+    "deploy:canary": "node backend/scripts/deploy_canary.mjs",
+    "build:fe": "pnpm -C frontend build",
+    "build:fe:diag": "pnpm -C frontend build:diag",
+    "clean:fe": "pnpm -C frontend clean",
+    "accept:build": "pnpm -C frontend build",
+    "accept:deploy": "pnpm -C frontend exec firebase deploy --only hosting",
+    "proof:why": "pnpm -w why react react-dom next styled-jsx"
+  },
+
+  "pnpm": {
+    "overrides": {
+      "react": "19.1.0",
+      "react-dom": "19.1.0",
+      "next": "15.5.2",
+      "styled-jsx": "5.1.6"
+    },
+    "public-hoist-pattern": [
+      "react*",
+      "next*",
+      "styled-jsx"
+    ]
   }
 }

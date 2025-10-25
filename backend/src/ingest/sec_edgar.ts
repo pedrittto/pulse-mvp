@@ -83,6 +83,7 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
     lastModified = r.lastModified || lastModified;
     const now = Date.now();
     const entries = extractEntries(r.text);
+    (r as any).text = undefined as any;
     const passForm = buildFormFilter();
     let newCount = 0;
     for (const it of entries) {
@@ -120,7 +121,7 @@ export default adapter;
 // --- Internals ---
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const FRESH_MS = Number(process.env.FRESH_MS || 5 * 60 * 1000);
-const MAX_BYTES_ATOM = Number(process.env.MAX_BYTES_RSS || 1_000_000);
+const MAX_BYTES_ATOM = Number(process.env.MAX_BYTES_RSS || 800_000);
 let etag: string | undefined;
 let lastModified: string | undefined;
 let watermarkPublishedAt = 0;
@@ -152,17 +153,20 @@ async function fetchAtom(url: string, ua: string): Promise<{ status: number; tex
     "user-agent": ua,
     "accept": "application/atom+xml,application/xml;q=0.9,*/*;q=0.8",
     "cache-control": "no-cache",
+    "accept-encoding": "gzip",
   };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(url, {
+  const d = pickAgent(url) as unknown as any;
+  const init: RequestInit & { dispatcher?: any } = {
     method: "GET",
     headers,
     redirect: "follow",
     cache: "no-store",
     signal: AbortSignal.timeout(1200),
-    agent: pickAgent(url),
-  } as any);
+  };
+  if (d) init.dispatcher = d;
+  const res = await fetch(url, init as any);
   if (res.status === 304) return { status: 304 } as any;
   const cl = Number(res.headers.get("content-length") || 0);
   if (cl && cl > MAX_BYTES_ATOM) throw new Error('RESP_TOO_LARGE');

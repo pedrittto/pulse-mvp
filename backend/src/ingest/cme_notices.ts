@@ -7,6 +7,7 @@ import { getGovernor, classifyOutcome } from "./governor.js";
 import { warnOncePer } from "../log/rateLimit.js";
 import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX } from "./utils/dedupe.js";
 
 const FEED_URL = process.env.CME_NOTICES_URL ?? DEFAULT_URLS.CME_NOTICES_URL;
 
@@ -48,6 +49,7 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
     "accept-language": "en-US,en;q=0.7",
     "user-agent": "PulseNewsBot/1.0 (+contact: ops@pulsenewsai.com)",
     "cache-control": "no-cache",
+    "accept-encoding": "gzip",
   };
   if (conditional) {
     if (etag) headers["if-none-match"] = etag;
@@ -58,13 +60,16 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
   if (!token.ok) {
     return { status: 0 } as any; // caller will handle scheduling based on governor
   }
-  const res = await fetch(FEED_URL, {
+  const d = pickAgent(FEED_URL) as unknown as any;
+  const init: RequestInit & { dispatcher?: any } = {
     method: "GET",
     headers,
     redirect: "follow",
     cache: "no-store",
     signal: AbortSignal.timeout(2000),
-  });
+  };
+  if (d) init.dispatcher = d;
+  const res = await fetch(FEED_URL, init);
   if (res.status === 304) return { status: 304 };
   const cl = Number(res.headers.get("content-length") || 0);
   if (cl && cl > MAX_BYTES_HTML) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
@@ -80,7 +85,7 @@ async function httpGet(FEED_URL: string, conditional = false): Promise<{ status:
   };
 }
 
-function pickFirstNoticeLinksFromHub(html: string, baseUrl: string, max = 10): string[] {
+function pickFirstNoticeLinksFromHub(html: string, baseUrl: string, max = 5): string[] {
   if (!html) return [];
   const out: string[] = [];
   const anchorRegex = /<a\b[^>]*href=\"([^\"]+)\"[^>]*>([\s\S]*?)<\/a>/gi;
@@ -146,6 +151,7 @@ export function startCmeNoticesIngest(): void {
         return;
       }
       const t0 = Date.now();
+      // No per-adapter locks; single global scheduler runs one at a time
       const hub = await httpGet(FEED_URL, true);
       const dt = Date.now() - t0;
       if ((hub as any).status === 0) { const outcome = classifyOutcome(0); ingestOutcome(SOURCE, outcome); const base = GOV.nextDelayAfter(SOURCE, outcome); const d = noChangeStreak >= 3 ? 15000 : base; timer = setTimeout(tick, d); (timer as any)?.unref?.(); return; }
@@ -174,13 +180,16 @@ export function startCmeNoticesIngest(): void {
         const canonicalId = `cme_notices:${url}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
+        // enforce dedupe cap immediately after insert; medium/heavy prefers pruneTo=2500
+        trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
         if (publishedAt < now - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
         // Class C: excluded from MVP
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
-      if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
+      // bound dedupe memory (steady-state ~2500, hard cap 3000)
+      trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
     } catch (e) {
       const outcome = classifyOutcome(0, e);
       ingestOutcome(SOURCE, outcome);

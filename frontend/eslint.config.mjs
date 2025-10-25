@@ -23,6 +23,47 @@ const eslintConfig = [
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "warn",
       "@typescript-eslint/no-explicit-any": "warn",
+      // Forbid importing next/document in App Router projects
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "next/document",
+              message:
+                "Do not import next/document in App Router. Use app/layout.tsx for <html>/<body> only.",
+            },
+          ],
+        },
+      ],
+      // Forbid Document primitives usage anywhere
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXIdentifier[name=/^(Html|Head|Main|NextScript)$/]",
+          message: "Do not use Document primitives (Html/Head/Main/NextScript) in App Router.",
+        },
+      ],
+    },
+  },
+  // Forbid <html>/<body> usage outside app/layout.tsx
+  {
+    files: ["src/**/*.{ts,tsx,js,jsx,mdx}"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "JSXOpeningElement[name.name=/^(html|body)$/]",
+          message: "Use <html>/<body> only in app/layout.tsx.",
+        },
+      ],
+    },
+  },
+  // Allow <html>/<body> in the canonical layout file
+  {
+    files: ["src/app/layout.tsx"],
+    rules: {
+      "no-restricted-syntax": "off",
     },
   },
 ];

@@ -7,6 +7,7 @@ import { getGovernor, classifyOutcome } from "./governor.js";
 import { warnOncePer } from "../log/rateLimit.js";
 import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { readTextWithCap } from "./read_text_cap.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX } from "./utils/dedupe.js";
 
 const URL = process.env.NYSE_NOTICES_URL ?? DEFAULT_URLS.NYSE_NOTICES_URL; // HTML/RSS/JSON
 
@@ -50,17 +51,20 @@ async function fetchFeed(): Promise<{ status: number; text?: string; json?: any;
   };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(URL, {
+  const d = pickAgent(URL) as unknown as any;
+  const init: RequestInit & { dispatcher?: any } = {
     method: "GET",
-    headers,
+    headers: { ...headers, "accept-encoding": "gzip" },
     redirect: "follow",
     cache: "no-store",
     signal: AbortSignal.timeout(2000),
-  });
+  };
+  if (d) init.dispatcher = d;
+  const res = await fetch(URL, init);
   if (res.status === 304) return { status: 304 };
   const ct = res.headers.get("content-type") || "";
   const cl = Number(res.headers.get("content-length") || 0);
-  if (cl && /html|text|xml|json/i.test(ct) && cl > MAX_BYTES_HTML) { respTooLarge++; }
+  if (cl && /html|text|xml|json/i.test(ct) && cl > MAX_BYTES_HTML) { respTooLarge++; throw new Error('RESP_TOO_LARGE'); }
   const common = {
     status: res.status,
     etag: res.headers.get("etag") ?? undefined,
@@ -164,6 +168,8 @@ export function startNyseNoticesIngest() {
       } else if (r.text) {
         items = parseRSSorHTML(r.text);
       }
+      // Drop large body asap
+      (r as any).text = undefined as any; (r as any).json = undefined as any;
 
       const now = Date.now();
       for (const it of items) {
@@ -171,6 +177,8 @@ export function startNyseNoticesIngest() {
         const canonicalId = `nyse_notices:${it.url || it.title}:${new Date(publishedAt).toISOString()}`;
         if (lastIds.has(canonicalId)) continue;
         lastIds.add(canonicalId);
+        // enforce dedupe cap immediately after insert; heavy feed prefers pruneTo=2500
+        trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
         if (publishedAt < now - FRESH_MS) continue;
         if (watermarkPublishedAt && publishedAt <= watermarkPublishedAt) continue;
 
@@ -188,7 +196,8 @@ export function startNyseNoticesIngest() {
         recordPipelineLatency("nyse_notices", visibleAt, visibleAt + 1);
         if (publishedAt > watermarkPublishedAt) watermarkPublishedAt = publishedAt;
       }
-      if (lastIds.size > 5000) lastIds = new Set(Array.from(lastIds).slice(-2500));
+      // bound dedupe memory (steady-state ~2500, hard cap 3000)
+      trimSetInPlace(lastIds, DEDUPE_HARD_MAX, 2500);
       const recency = items.length ? (now - items[0].publishedAt) : undefined;
       ingestOutcome(SOURCE, 'HTTP_200');
       const base = GOV.nextDelayAfter(SOURCE, 'HTTP_200', { recencyMs: recency });

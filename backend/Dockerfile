@@ -1,33 +1,20 @@
-# ---- deps ----
-FROM node:22-slim AS deps
-WORKDIR /app
-# Use a project-local pnpm store so we can copy it into the runtime image
-ENV PNPM_STORE_DIR=/pnpm/store
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
-COPY package.json pnpm-lock.yaml* ./
-# Install deps (prefer lockfile; fall back if missing)
-RUN pnpm install --frozen-lockfile || pnpm install
-
-# ---- build ----
-FROM node:22-slim AS build
-WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
-COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-RUN pnpm run build
-
-# ---- runtime ----
-FROM gcr.io/distroless/nodejs22-debian12
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=8080
-# Keep the same store path used during install so pnpm symlinks resolve
-ENV PNPM_STORE_DIR=/pnpm/store
-# App artifacts
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/package.json ./package.json
-# pnpm runtime requirements: node_modules + store
-COPY --from=deps  /app/node_modules ./node_modules
-COPY --from=deps  /pnpm/store      /pnpm/store
-# Distroless nodejs image has ENTRYPOINT=node; run our script
-CMD ["dist/index.js"]
+# --- builder ---
+    FROM node:20-alpine AS builder
+    WORKDIR /app
+    # prościej: pnpm globalnie, bez corepack
+    RUN npm i -g pnpm@9.15.9
+    COPY package.json tsconfig.json ./
+    COPY src ./src
+    # brak lockfile → instalujemy bez --frozen-lockfile
+    RUN pnpm install --no-frozen-lockfile
+    RUN pnpm run build
+    
+    # --- runtime ---
+    FROM node:20-alpine AS runtime
+    WORKDIR /app
+    RUN npm i -g pnpm@9.15.9
+    COPY package.json ./
+    RUN pnpm install --prod --no-frozen-lockfile
+    COPY --from=builder /app/dist ./dist
+    EXPOSE 8080
+    CMD ["node","dist/index.js"]

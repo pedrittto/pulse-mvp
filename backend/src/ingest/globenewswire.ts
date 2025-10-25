@@ -8,6 +8,7 @@ import { classifyOutcome } from "./governor.js";
 import { warnOncePer } from "../log/rateLimit.js";
 import { ingestOutcome } from "../metrics/simpleCounters.js";
 import { canonicalIdFromItem } from "./lib/canonicalId.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO } from "./utils/dedupe.js";
 
 const SOURCE_GNW = 'globenewswire';
 
@@ -85,10 +86,14 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
     lastModified = r.lastModified || lastModified;
     const now = Date.now();
     const items = extractItems(r.text);
+    // Drop reference immediately
+    (r as any).text = undefined as any;
     let newCount = 0;
     for (const it of items) {
       if (lastGuids.has(it.guid)) continue;
       lastGuids.add(it.guid);
+      // enforce dedupe cap immediately after insert
+      trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
       // freshness & watermark
       if (it.publishedAt < now - FRESH_MS) continue;
       if (watermarkPublishedAt && it.publishedAt <= watermarkPublishedAt) continue;
@@ -109,10 +114,8 @@ export async function tick(): Promise<{ http_status: number; new_items: number }
       newCount++;
     }
     if (DEBUG_INGEST) console.log(`[ingest:${SOURCE_GNW}] 200 items=${items.length} new=${newCount}`);
-    // bound dedupe memory
-    if (lastGuids.size > 2000) {
-      lastGuids = new Set(Array.from(lastGuids).slice(-1000));
-    }
+    // bound dedupe memory (steady-state ~2000, hard cap 3000)
+    trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
     return { http_status: 200, new_items: newCount };
   } catch (e) {
     const outcome = classifyOutcome(0, e);
@@ -140,7 +143,7 @@ function warnOnceMissingUrl() {
 // --- Internal helpers mirroring prnewswire.js ---
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 const FRESH_MS = Number(process.env.FRESH_MS || 5 * 60 * 1000);
-const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 1_000_000);
+const MAX_BYTES_RSS = Number(process.env.MAX_BYTES_RSS || 800_000);
 let etag: string | undefined;
 let lastModified: string | undefined;
 let lastGuids = new Set<string>();
@@ -171,14 +174,16 @@ async function fetchFeed(url: string): Promise<{ status: number; text?: string; 
   const headers: Record<string, string> = { "user-agent": "pulse-ingest/1.0" };
   if (etag) headers["if-none-match"] = etag;
   if (lastModified) headers["if-modified-since"] = lastModified;
-  const res = await fetch(url, {
+  const d = pickAgent(url) as unknown as any;
+  const init: RequestInit & { dispatcher?: any } = {
     method: "GET",
-    headers,
+    headers: { ...headers, "accept-encoding": "gzip" },
     redirect: "follow",
     cache: "no-store",
     signal: AbortSignal.timeout(900),
-    agent: pickAgent(url),
-  } as any);
+  };
+  if (d) init.dispatcher = d;
+  const res = await fetch(url, init as any);
   if (res.status === 304) return { status: 304 } as any;
   const cl = Number(res.headers.get("content-length") || 0);
   if (cl && cl > MAX_BYTES_RSS) throw new Error('RESP_TOO_LARGE');

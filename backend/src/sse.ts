@@ -41,15 +41,7 @@ export function getSSEStats() {
   };
 }
 
-// Global heartbeat every 15s only when SSE is enabled
-if (process.env.SSE_ENABLED === "1") {
-  setInterval(() => {
-    const ts = Date.now().toString();
-    for (const c of clients) {
-      if (!c.res.writableEnded) { writeEvent(c.res, 'ping', ts); eventsSent++; }
-    }
-  }, 15000).unref?.();
-}
+// Per-connection heartbeat implemented inside the route handler
 
 export function registerSSE(app: any) {
   // If disabled, expose a fast 503 on the SSE route
@@ -68,28 +60,43 @@ export function registerSSE(app: any) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+
+    // Keep socket alive & disable timeouts
+    // @ts-ignore
+    (req as any).socket?.setKeepAlive?.(true);
+    // @ts-ignore
+    (req as any).socket?.setTimeout?.(0);
+
+    // Flush headers early
     (res as any).flushHeaders?.();
 
-    // initial hello event (sends first bytes)
-    writeEvent(res, 'hello', JSON.stringify({ ok: true }));
+    const send = (event: string, data: any) => {
+      const payload = typeof data === 'string' ? data : JSON.stringify(data);
+      res.write(`event: ${event}\n`);
+      res.write(`data: ${payload}\n\n`);
+    };
+
+    console.log('[sse] open');
+    send('hello', { ok: true });
     eventsSent++;
+
+    const hbMs = Number(process.env.SSE_HEARTBEAT_MS || 15000);
+    const timer = setInterval(() => {
+      send('ping', Date.now());
+      console.log('[sse] ping');
+      eventsSent++;
+    }, hbMs);
+    (timer as any).unref?.();
 
     const client: Client = { res };
     clients.add(client);
-    console.log(`[sse] client +1 (clients=${clients.size})`);
 
-    let closed = false;
-    const cleanup = () => {
-      if (closed) return;
-      closed = true;
+    // Cleanup only on client close; never call res.end() proactively
+    req.on('close', () => {
+      clearInterval(timer);
       clients.delete(client);
-      try { res.end(); } catch {}
-      console.log(`[sse] client -1 (clients=${clients.size})`);
-    };
-
-    // Tear down on BOTH sides to cover proxy/idle/aborts
-    ['close','finish','error','aborted'].forEach(ev => (res as any).once(ev, cleanup));
-    ['close','aborted'].forEach(ev => (req as any).once(ev, cleanup));
+      console.log('[sse] close');
+    });
   });
 
   // debug

@@ -6,6 +6,7 @@ import { getGovernor } from "./governor.js";
 import { pickAgent } from "./http_agent.js";
 import { DEFAULT_URLS } from "../config/rssFeeds.js";
 import { warnOncePer } from "../log/rateLimit.js";
+import { trimSetInPlace, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO } from "./utils/dedupe.js";
 const URL = process.env.BUSINESSWIRE_RSS_URL ?? process.env.BW_RSS_URL ?? DEFAULT_URLS.BW_RSS_URL;
 const DEBUG_INGEST = /^(1|true)$/i.test(process.env.DEBUG_INGEST ?? "");
 let BW_BACKOFF_UNTIL = 0; // epoch ms; skip ticks until this time after 403
@@ -70,14 +71,17 @@ async function fetchFeed() {
     const ctrl = new AbortController();
     const to = setTimeout(() => ctrl.abort(), 1200);
 
-    const res = await fetch(URL, {
+    const d = pickAgent(URL);
+    const init = {
         method: "GET",
         headers,
         redirect: "follow",
         cache: "no-store",
-        signal: ctrl.signal,
-        agent: pickAgent(URL)
-    });
+        signal: ctrl.signal
+    };
+    if (d)
+        init.dispatcher = d;
+    const res = await fetch(URL, init);
 
     clearTimeout(to);
 
@@ -212,10 +216,8 @@ export function startBusinessWireIngest() {
                 anyNew = true;
                 newCount++;
             }
-            // bound dedup memory
-            if (lastGuids.size > 2000) {
-                lastGuids = new Set(Array.from(lastGuids).slice(-1000));
-            }
+            // bound dedupe memory (steady-state ~2000, hard cap 3000)
+            trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
             const recency = items.length ? (now - items[0].publishedAt) : undefined;
             // external scheduler re-arms
             if (DEBUG_INGEST) console.log(`[sched] tick done source=${SOURCE} status=${r.status} new_items=${newCount}`);
@@ -327,9 +329,7 @@ export async function tickOnce() {
         if (publisher_ts > watermarkPublishedAt) watermarkPublishedAt = publisher_ts;
         newCount++;
     }
-    if (lastGuids.size > 2000) {
-        lastGuids = new Set(Array.from(lastGuids).slice(-1000));
-    }
+    trimSetInPlace(lastGuids, DEDUPE_HARD_MAX, DEDUPE_PRUNE_TO);
     return { http_status: 200, new_items: newCount };
 }
 

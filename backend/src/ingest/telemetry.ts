@@ -49,4 +49,15 @@ export function getSchedulerSnapshot(): Record<string, Sched> {
   return sched;
 }
 
+// Minimal summary used by /metrics-summary
+export async function getMetricsSummary(): Promise<{ n_total: number; by_source: Record<string, { samples: number }> }>{
+  const snapshot = getSchedulerSnapshot();
+  const by_source: Record<string, { samples: number }> = {};
+  for (const [k, v] of Object.entries(snapshot)) {
+    by_source[k] = { samples: v.ticks_total };
+  }
+  const n_total = Object.values(snapshot).reduce((acc, s) => acc + (s.ticks_total || 0), 0);
+  return { n_total, by_source };
+}
+
 

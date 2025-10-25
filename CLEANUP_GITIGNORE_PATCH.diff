@@ -1,0 +1,50 @@
+*** .gitignore
++ # Hygiene: build outputs, caches, logs, artifacts, envs (append-only)
++ node_modules/
++ **/node_modules/
++ dist/
++ **/dist/
++ .next/
++ out/
++ build/
++ .turbo/
++ .cache/
++ coverage/
++ .parcel-cache/
++ .rollup.cache/
++ backend/diagnostics/
++ 
++ # Logs & diagnostics
++ *.log
++ *.log.*
++ *.jsonl
++ logs/
++ **/*.map
++ debug.json
++ 
++ # Local/editor
++ .DS_Store
++ Thumbs.db
++ # vscode: keep only curated settings if present
++ .vscode/*
++ !.vscode/extensions.json
++ !.vscode/settings.json
++ .idea/
++ 
++ # Artifacts (keep folder with .gitkeep and reports)
++ ARTIFACTS/*
++ !ARTIFACTS/.gitkeep
++ !ARTIFACTS/CLEANUP_PLAN.md
++ !ARTIFACTS/CLEANUP_REPORT.md
++ 
++ # Env & secrets (examples allowed)
++ .env
++ .env.*
++ .envrc
++ !*.example
++ secrets/
++ secrets/local/
++ 
++ # Safety: do not ignore docs or markdown
++ !docs/
++ !**/*.md

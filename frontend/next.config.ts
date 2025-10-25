@@ -1,17 +1,12 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  typedRoutes: true,
-  // Keep build stable; Turbopack sometimes trips in workspaces on Windows
-  webpack: (config: any) => config,
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
   output: 'export',
-  images: {
-    unoptimized: true,
-  },
-  eslint: {
-    // Allow production builds to complete with warnings for MVP
-    ignoreDuringBuilds: true,
-  },
+  images: { unoptimized: true },
+  // If we add workspace packages later, enable and list them here:
+  // transpilePackages: ['@repo/ui', '@repo/utils'],
 };
+
 export default nextConfig;
 
 

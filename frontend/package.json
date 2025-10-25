@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "cross-env NODE_ENV=development next dev",
-    "build": "cross-env NODE_ENV=production next build",
+    "dev": "next dev",
+    "clean": "node -e \"const fs=require('fs'),p=require('path');for(const d of ['.next','out']){try{fs.rmSync(p.join(process.cwd(),d),{recursive:true,force:true})}catch{}}\"",
+    "prebuild": "node ./scripts/sanitize.mjs",
+    "build": "pnpm run clean && next build",
+    "build:diag": "node -e \"process.env.NEXT_CACHE_DISABLED='1';process.env.NEXT_TELEMETRY_DISABLED='1';process.exit(0)\" && pnpm run build",
     "start": "next start -p $PORT",
     "lint": "eslint"
   },
@@ -15,12 +18,18 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4.1.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "autoprefixer": "^10.4.21",
     "cross-env": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "15.5.2",
+    "firebase": "^12.3.0",
+    "postcss": "^8.5.6",
+    "rimraf": "^6.0.0",
+    "tailwindcss": "^4.1.13",
     "typescript": "^5"
   },
   "engines": {

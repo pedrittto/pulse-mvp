@@ -1,5 +1,7 @@
 ﻿import express from "express";
 import cors from "cors";
+import { registerSSE } from "./sse.js";
+import { reportTick } from "./ingest/telemetry.js";
 
 // Boot banners for visibility
 console.log('[boot] ingest build OK :: ' + new Date().toISOString());
@@ -12,69 +14,56 @@ process.on('uncaughtException',  (e: any) => console.error('[boot] uncaughtExcep
 // Minimal Express app and cheap endpoints only
 const app = express();
 app.use(cors());
+app.use(express.json());
 
 // Health endpoint
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// ===== Tick-by-request implementation =====
-let tickRunning = false;
-function log(level: 'info' | 'warn', msg: string, extra: Record<string, unknown> = {}) {
-  const line = `[tick] ${msg} ${JSON.stringify(extra)}`;
-  if (level === 'warn') { try { console.warn(line); } catch {} } else { try { console.info(line); } catch {} }
-}
-
-async function runOneCycle(): Promise<{ n: number; t_ms: number }> {
-  const startedAt = Date.now();
-  // Lazy import ingest orchestrator to avoid side-effects on cold boot
-  const ingest: any = await import('./ingest/index.js');
-  const sources: string[] = Array.isArray(ingest.resolveActive?.(process.env.INGEST_SOURCES))
-    ? ingest.resolveActive(process.env.INGEST_SOURCES)
-    : String(process.env.INGEST_SOURCES || '')
-        .split(',')
-        .map((s: string) => s.trim())
-        .filter(Boolean);
-
-  let n = 0;
-  for (const src of sources) {
-    const t0 = Date.now();
-    try {
-      if (typeof ingest.runProbeOnce === 'function') {
-        await ingest.runProbeOnce(src);
-      } else if (ingest && ingest[src] && typeof ingest[src].probeOnce === 'function') {
-        await ingest[src].probeOnce();
-      }
-      n++;
-      log('info', 'source_ok', { src, ms: Date.now() - t0 });
-    } catch (e: any) {
-      log('warn', 'source_err', { src, ms: Date.now() - t0, err: String(e?.message || e) });
-    }
+// In-memory, tiny rate limiter for /debug/push (5/min per IP)
+const __debugPushHits = new Map<string, number>();
+function allowDebugPush(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const key = ip || 'unknown';
+  // store as packed counter with timestamp suffix to avoid arrays
+  const prev = __debugPushHits.get(key) || 0;
+  const prevTs = Math.floor(prev / 10);
+  const prevCount = prev % 10;
+  const within = prevTs > (now - windowMs);
+  const count = within ? prevCount + 1 : 1;
+  __debugPushHits.set(key, (now * 10) + Math.min(count, 9));
+  // trim old entries occasionally (cheap)
+  if (__debugPushHits.size > 200) {
+    for (const [k, v] of __debugPushHits) { const ts = Math.floor(v / 10); if (ts < now - windowMs) __debugPushHits.delete(k); }
   }
-
-  const t_ms = Date.now() - startedAt;
-  log('info', 'cycle_done', { n, ms: t_ms });
-  return { n, t_ms };
+  return count <= 5;
 }
 
-function requireTickKey(req: any, res: any, next: any) {
-  const key = process.env.TICK_KEY;
-  if (!key) return res.status(500).json({ ok: false, error: 'tick_key_not_set' });
-  if (req.header('X-Tick-Key') !== key) return res.status(401).json({ ok: false, error: 'unauthorized' });
-  next();
-}
-
-app.post('/_internal/tick', requireTickKey, async (req, res) => {
-  if (tickRunning) return res.status(429).json({ ok: false, error: 'tick_in_progress' });
-  tickRunning = true;
+// Debug push: increments metrics-summary via telemetry path
+app.post('/debug/push', (req, res) => {
   try {
-    const out = await runOneCycle();
-    return res.json({ ok: true, ...out });
-  } catch (e: any) {
-    log('warn', 'cycle_err', { err: String(e?.message || e) });
-    return res.status(500).json({ ok: false, error: 'cycle_failed' });
-  } finally {
-    tickRunning = false;
+    const expected = (process.env.DEBUG_PUSH_KEY || '63376d93b75b422ab4275a8e0e646ac7').trim();
+    const got = String(req.header('x-debug-key') || '').trim();
+    if (!expected || got !== expected) return res.status(401).json({ ok: false });
+    const ip = String((req as any).ip || (req.headers['x-forwarded-for'] as any) || '').split(',')[0].trim();
+    if (!allowDebugPush(ip)) return res.status(429).json({ ok: false, error: 'rate_limited' });
+    const body = (req.body && typeof req.body === 'object') ? req.body as any : {};
+    const payload = {
+      type: String(body.type || 'breaking'),
+      title: String(body.title || 'debug'),
+      source: String(body.source || 'debug'),
+      url: String(body.url || 'https://example.com'),
+      published_at_ms: Number(body.published_at_ms || Date.now()),
+    };
+    // Reuse telemetry path used by scheduler: increments by_source.* and n_total
+    try { reportTick(payload.source, { status: 200 }); } catch {}
+    return res.json({ ok: true });
+  } catch {
+    return res.status(500).json({ ok: false });
   }
 });
+
+// No direct tick endpoints; scheduling is handled by single ingest scheduler
 
 // Lazy metrics endpoint
 app.get('/metrics-summary', async (_req, res) => {
@@ -91,6 +80,12 @@ app.get('/metrics-summary', async (_req, res) => {
   return res.json({ n_total: 0, by_source: {}, backoffFailMs: 30000 });
 });
 
+// Register SSE routes (enabled or disabled variant based on env)
+registerSSE(app);
+
+// Boot diagnostic
+console.log('[boot] routes wired: tick + metrics + sse');
+
 // Bind HTTP FIRST so Cloud Run sees the service alive
 const port = Number(process.env.PORT || 8080);
 const host = '0.0.0.0';
@@ -100,6 +95,8 @@ app.listen(port, host, () => {
   
   // Optional: local-only, safe in prod
   import('dotenv/config').catch(() => {});
+
+  // No internal probe/tick loop; a single global scheduler runs the adapters
 
   // Env gates (never exit; HTTP must stay alive)
   const jobsEnabled = /^(1|true)$/i.test((process.env.JOBS_ENABLED || '').trim());
@@ -134,18 +131,14 @@ app.listen(port, host, () => {
       return;
     }
 
-    // Start scheduler (dynamic import)
+    // Start single global ingest scheduler (no fan-out)
     try {
-      const reg: any = await import('./ingest/registry.js');
-      const start = (reg as any)?.startIngests ?? (reg as any)?.default?.startIngests;
-      if (typeof start === 'function') {
-        try { (start as any).length ? (start as any)(config) : (start as any)(); } catch { (start as any)(); }
-        console.log('[boot] startIngests() launched');
-      } else {
-        console.warn('[boot] startIngests not found on module');
-      }
+      const sched: any = await import('./ingest/index.js');
+      const start = (sched as any)?.startIngestScheduler ?? (sched as any)?.default?.startIngestScheduler;
+      if (typeof start === 'function') { start(); console.log('[boot] ingest scheduler started'); }
+      else { console.warn('[boot] ingest scheduler start not found'); }
     } catch (err) {
-      console.error('[boot] failed to start ingests', err);
+      console.error('[boot] failed to start ingest scheduler', err);
     }
   })();
 });
