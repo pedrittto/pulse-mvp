@@ -2,6 +2,12 @@
 import cors from "cors";
 import { registerSSE } from "./sse.js";
 import { reportTick } from "./ingest/telemetry.js";
+import { setupPersistence } from "./persist/firestoreWriter.js";
+import { Firestore } from "@google-cloud/firestore";
+import { registerAfterEmit } from "./core/emit.js";
+import { recordItemMetrics, purgeOldMetrics, getLatencySummary, getCounts1h } from "./metrics/latency.js";
+import { clientCount } from "./sse.js";
+import { startCentralScheduler } from "./ingest/scheduler.js";
 
 // Boot banners for visibility
 console.log('[boot] ingest build OK :: ' + new Date().toISOString());
@@ -13,7 +19,50 @@ process.on('uncaughtException',  (e: any) => console.error('[boot] uncaughtExcep
 
 // Minimal Express app and cheap endpoints only
 const app = express();
-app.use(cors());
+
+// CORS: strict allow-list with resume-safe defaults
+const rawCorsEnv = String(process.env.CORS_ORIGIN || '').trim();
+const allowedOrigins = (rawCorsEnv ? rawCorsEnv.split(',') : ['http://localhost:3000']).map(v => v.trim()).filter(Boolean);
+if (!rawCorsEnv) {
+  try { console.warn('[cors] CORS_ORIGIN not set — allowing http://localhost:3000 (dev)'); } catch {}
+}
+
+// Always indicate response varies by Origin
+app.use((_req, res, next) => { res.append('Vary', 'Origin'); next(); });
+
+function isOriginAllowed(origin: string | undefined | null): boolean {
+  if (!origin) return true; // non-CORS requests
+  return allowedOrigins.includes(origin);
+}
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin || isOriginAllowed(origin)) return callback(null, true);
+    return callback(null, false);
+  },
+};
+
+// Preflight handling with same allow-list
+app.options('*', (req, res, next) => {
+  const origin = String(req.header('Origin') || '');
+  if (origin && !isOriginAllowed(origin)) {
+    return res.status(403).json({ error: 'CORS origin not allowed' });
+  }
+  return (cors as any)(corsOptions)(req, res, next);
+});
+
+// Gate disallowed origins early for all routes; do not emit ACAO
+app.use((req, res, next) => {
+  const origin = String(req.header('Origin') || '');
+  if (origin && !isOriginAllowed(origin)) {
+    return res.status(403).json({ error: 'CORS origin not allowed' });
+  }
+  next();
+});
+
+// Apply CORS for allowed origins only
+app.use(cors(corsOptions));
+
 app.use(express.json());
 
 // Health endpoint
@@ -65,33 +114,74 @@ app.post('/debug/push', (req, res) => {
 
 // No direct tick endpoints; scheduling is handled by single ingest scheduler
 
-// Lazy metrics endpoint
+// (metrics-summary route consolidated below)
+
+// Register SSE routes (enabled or disabled variant based on env)
+registerSSE(app);
+
+// Persistence (cold path): non-blocking after-emit hook
+setupPersistence();
+
+// Metrics v2: record after-emit, purge timer
+try { registerAfterEmit((item: any) => { try { recordItemMetrics(item); } catch {} }); } catch {}
+const __purgeT = setInterval(() => { try { purgeOldMetrics(); } catch {} }, 5 * 60 * 1000);
+(__purgeT as any)?.unref?.();
+
+// Cold-read hydration: recent items from Firestore
+app.get('/api/recent', async (req, res) => {
+  const limit = Math.max(1, Math.min(200, parseInt(String((req.query as any)?.limit || '50'), 10) || 50));
+  if (process.env.PERSIST_ENABLED !== '1') return res.json({ items: [] });
+  try {
+    const fs = new Firestore();
+    const col = fs.collection(process.env.FIRESTORE_COLLECTION_NAME || 'pulse_items_v1');
+    let snap = await col.orderBy('publisher_seen_at_ms', 'desc').limit(limit).get();
+    if (snap.empty) {
+      snap = await col.orderBy('visible_at_ms', 'desc').limit(limit).get();
+    }
+    const items = snap.docs.map(d => d.data());
+    return res.json({ items });
+  } catch {
+    return res.json({ items: [] });
+  }
+});
+
+// Lightweight metrics
+app.get('/metrics-lite', (_req, res) => {
+  const counts = getCounts1h();
+  const by_source: Record<string, any> = {};
+  for (const [src, n] of Object.entries(counts)) by_source[src] = { count_1h: n as number };
+  return res.json({ status: 'ok', sse_clients: clientCount(), by_source });
+});
+
+// Extend metrics-summary with latency percentiles (merge with existing behavior if needed)
 app.get('/metrics-summary', async (_req, res) => {
   try {
     const mod: any = await import('./ingest/telemetry.js');
     const getSummary = (mod as any)?.getMetricsSummary ?? (mod as any)?.default?.getMetricsSummary;
+    let base: any = {};
     if (typeof getSummary === 'function') {
-      const data = await getSummary();
-      return res.json(data);
+      try { base = await getSummary(); } catch {}
     }
+    const lat = getLatencySummary();
+    // conservative merge
+    return res.json({ ...base, window_minutes: lat.window_minutes, global: lat.global, by_source: { ...(base?.by_source || {}), ...(lat.by_source || {}) } });
   } catch (e) {
-    try { console.warn('[metrics] fallback response', e as any); } catch {}
+    const lat = getLatencySummary();
+    return res.json({ window_minutes: lat.window_minutes, global: lat.global, by_source: lat.by_source });
   }
-  return res.json({ n_total: 0, by_source: {}, backoffFailMs: 30000 });
 });
 
-// Register SSE routes (enabled or disabled variant based on env)
-registerSSE(app);
+// Central scheduler (non-blocking; feature-flagged)
+try { startCentralScheduler(); } catch {}
 
 // Boot diagnostic
 console.log('[boot] routes wired: tick + metrics + sse');
 
 // Bind HTTP FIRST so Cloud Run sees the service alive
-const port = Number(process.env.PORT || 8080);
-const host = '0.0.0.0';
+const PORT = Number(process.env.PORT || 8080);
 
-app.listen(port, host, () => {
-  console.log('[boot] http listening', { port, host });
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[boot] listening on ${PORT}`);
   
   // Optional: local-only, safe in prod
   import('dotenv/config').catch(() => {});
@@ -131,14 +221,16 @@ app.listen(port, host, () => {
       return;
     }
 
-    // Start single global ingest scheduler (no fan-out)
-    try {
-      const sched: any = await import('./ingest/index.js');
-      const start = (sched as any)?.startIngestScheduler ?? (sched as any)?.default?.startIngestScheduler;
-      if (typeof start === 'function') { start(); console.log('[boot] ingest scheduler started'); }
-      else { console.warn('[boot] ingest scheduler start not found'); }
-    } catch (err) {
-      console.error('[boot] failed to start ingest scheduler', err);
+    // Start legacy ingest scheduler only if central is disabled
+    if ((process.env.SCHED_CENTRAL || '1') !== '1') {
+      try {
+        const sched: any = await import('./ingest/index.js');
+        const start = (sched as any)?.startIngestScheduler ?? (sched as any)?.default?.startIngestScheduler;
+        if (typeof start === 'function') { start(); console.log('[boot] ingest scheduler started'); }
+        else { console.warn('[boot] ingest scheduler start not found'); }
+      } catch (err) {
+        console.error('[boot] failed to start ingest scheduler', err);
+      }
     }
   })();
 });
