@@ -6,6 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx watch src/index.ts",
+    "prestart": "npm ci --omit=dev --no-fund --no-audit",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "smoke": "node scripts/smoke.mjs",
