@@ -1,5 +1,7 @@
-﻿import express from "express";
-import cors from "cors";
+﻿import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const express = require("express");
+const cors = require("cors");
 import { registerSSE } from "./sse.js";
 import { reportTick } from "./ingest/telemetry.js";
 import { setupPersistence } from "./persist/firestoreWriter.js";
@@ -178,10 +180,10 @@ try { startCentralScheduler(); } catch {}
 console.log('[boot] routes wired: tick + metrics + sse');
 
 // Bind HTTP FIRST so Cloud Run sees the service alive
-const PORT = Number(process.env.PORT || 8080);
+const PORT = Number(process.env.PORT) || 8080;
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[boot] listening on ${PORT}`);
+  console.log(`[pulse-web] listening on ${PORT}`);
   
   // Optional: local-only, safe in prod
   import('dotenv/config').catch(() => {});
