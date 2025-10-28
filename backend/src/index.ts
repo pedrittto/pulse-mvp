@@ -44,14 +44,7 @@ const corsOptions = {
   },
 };
 
-// Preflight handling with same allow-list
-app.options(/.*/, (req, res, next) => {
-  const origin = String(req.header('Origin') || '');
-  if (origin && !isOriginAllowed(origin)) {
-    return res.status(403).json({ error: 'CORS origin not allowed' });
-  }
-  return (cors as any)(corsOptions)(req, res, next);
-});
+// Preflight handled by CORS middleware; disallowed origins are gated below
 
 // Gate disallowed origins early for all routes; do not emit ACAO
 app.use((req, res, next) => {
