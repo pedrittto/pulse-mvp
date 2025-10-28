@@ -45,7 +45,7 @@ const corsOptions = {
 };
 
 // Preflight handling with same allow-list
-app.options('/*', (req, res, next) => {
+app.options(/.*/, (req, res, next) => {
   const origin = String(req.header('Origin') || '');
   if (origin && !isOriginAllowed(origin)) {
     return res.status(403).json({ error: 'CORS origin not allowed' });
