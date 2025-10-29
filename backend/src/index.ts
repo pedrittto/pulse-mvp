@@ -2,6 +2,7 @@
 const require = createRequire(import.meta.url);
 const express = require("express");
 const cors = require("cors");
+import type { Request, Response, NextFunction } from "express";
 import { registerSSE } from "./sse.js";
 import { reportTick } from "./ingest/telemetry.js";
 import { setupPersistence } from "./persist/firestoreWriter.js";
@@ -10,6 +11,8 @@ import { registerAfterEmit } from "./core/emit.js";
 import { recordItemMetrics, purgeOldMetrics, getLatencySummary, getCounts1h } from "./metrics/latency.js";
 import { clientCount } from "./sse.js";
 import { startCentralScheduler } from "./ingest/scheduler.js";
+
+let fs: Firestore | null = null;
 
 // Boot banners for visibility
 console.log('[boot] ingest build OK :: ' + new Date().toISOString());
@@ -30,7 +33,7 @@ if (!rawCorsEnv) {
 }
 
 // Always indicate response varies by Origin
-app.use((_req, res, next) => { res.append('Vary', 'Origin'); next(); });
+app.use((_req: Request, res: Response, next: NextFunction) => { res.append('Vary', 'Origin'); next(); });
 
 function isOriginAllowed(origin: string | undefined | null): boolean {
   if (!origin) return true; // non-CORS requests
@@ -47,7 +50,7 @@ const corsOptions = {
 // Preflight handled by CORS middleware; disallowed origins are gated below
 
 // Gate disallowed origins early for all routes; do not emit ACAO
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = String(req.header('Origin') || '');
   if (origin && !isOriginAllowed(origin)) {
     return res.status(403).json({ error: 'CORS origin not allowed' });
@@ -61,7 +64,7 @@ app.use(cors(corsOptions));
 app.use(express.json());
 
 // Health endpoint
-app.get('/health', (_req, res) => res.json({ ok: true }));
+app.get('/health', (_req: Request, res: Response) => res.json({ ok: true }));
 
 // In-memory, tiny rate limiter for /debug/push (5/min per IP)
 const __debugPushHits = new Map<string, number>();
@@ -84,7 +87,7 @@ function allowDebugPush(ip: string): boolean {
 }
 
 // Debug push: increments metrics-summary via telemetry path
-app.post('/debug/push', (req, res) => {
+app.post('/_debug/push', (req: Request, res: Response) => {
   try {
     const expected = (process.env.DEBUG_PUSH_KEY || '63376d93b75b422ab4275a8e0e646ac7').trim();
     const got = String(req.header('x-debug-key') || '').trim();
@@ -122,13 +125,21 @@ try { registerAfterEmit((item: any) => { try { recordItemMetrics(item); } catch 
 const __purgeT = setInterval(() => { try { purgeOldMetrics(); } catch {} }, 5 * 60 * 1000);
 (__purgeT as any)?.unref?.();
 
+function getFirestoreInstance() {
+  if (!fs) {
+    // This will now throw *inside* the request handler if permissions are bad,
+    // but it will NOT crash the server on startup.
+    fs = new Firestore();
+  }
+  return fs;
+}
+
 // Cold-read hydration: recent items from Firestore
-app.get('/api/recent', async (req, res) => {
+app.get('/api/recent', async (req: Request, res: Response) => {
   const limit = Math.max(1, Math.min(200, parseInt(String((req.query as any)?.limit || '50'), 10) || 50));
   if (process.env.PERSIST_ENABLED !== '1') return res.json({ items: [] });
   try {
-    const fs = new Firestore();
-    const col = fs.collection(process.env.FIRESTORE_COLLECTION_NAME || 'pulse_items_v1');
+    const col = getFirestoreInstance().collection(process.env.FIRESTORE_COLLECTION_NAME || 'pulse_items_v1');
     let snap = await col.orderBy('publisher_seen_at_ms', 'desc').limit(limit).get();
     if (snap.empty) {
       snap = await col.orderBy('visible_at_ms', 'desc').limit(limit).get();
@@ -141,7 +152,7 @@ app.get('/api/recent', async (req, res) => {
 });
 
 // Lightweight metrics
-app.get('/metrics-lite', (_req, res) => {
+app.get('/metrics-lite', (_req: Request, res: Response) => {
   const counts = getCounts1h();
   const by_source: Record<string, any> = {};
   for (const [src, n] of Object.entries(counts)) by_source[src] = { count_1h: n as number };
@@ -149,7 +160,7 @@ app.get('/metrics-lite', (_req, res) => {
 });
 
 // Extend metrics-summary with latency percentiles (merge with existing behavior if needed)
-app.get('/metrics-summary', async (_req, res) => {
+app.get('/metrics-summary', async (_req: Request, res: Response) => {
   try {
     const mod: any = await import('./ingest/telemetry.js');
     const getSummary = (mod as any)?.getMetricsSummary ?? (mod as any)?.default?.getMetricsSummary;
@@ -177,9 +188,6 @@ const PORT = Number(process.env.PORT) || 8080;
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[pulse-web] listening on ${PORT}`);
-  
-  // Optional: local-only, safe in prod
-  import('dotenv/config').catch(() => {});
 
   // No internal probe/tick loop; a single global scheduler runs the adapters
 
