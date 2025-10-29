@@ -1,7 +1,5 @@
-﻿import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const express = require("express");
-const cors = require("cors");
+﻿import express from "express";
+import cors from "cors";
 import type { Request, Response, NextFunction } from "express";
 import { registerSSE } from "./sse.js";
 import { reportTick } from "./ingest/telemetry.js";
